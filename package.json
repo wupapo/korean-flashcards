@@ -1,0 +1,9 @@
+{
+  "name": "korean-flashcards",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal Korean flashcards: upload a word list, practice on phone or laptop.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
