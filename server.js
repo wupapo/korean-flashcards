@@ -1,17 +1,22 @@
 'use strict';
-// Tiny zero-dependency server: serves the web app and stores everything in data/db.json.
-// Run: node server.js   (then open the printed URL on laptop or phone, same Wi-Fi)
+// Tiny zero-dependency server: serves the web app and a JSON API.
+// Storage: Supabase when SUPABASE_URL + SUPABASE_SECRET_KEY are set (see .env.example), otherwise data/db.json.
+// Run: npm start   (then open the printed URL on laptop or phone, same Wi-Fi)
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const crypto = require('crypto');
+const jsonStore = require('./store/json');
+const supabaseStore = require('./store/supabase');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
+
+const store =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY
+    ? supabaseStore(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY)
+    : jsonStore(path.join(__dirname, 'data', 'db.json'));
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -23,45 +28,27 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
-/* ---------- storage (replace this section to move to Supabase later) ---------- */
+/* ---------- input cleaning ---------- */
 
-function loadDb() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-  } catch {
-    return { folders: [] };
-  }
-}
-
-let db = loadDb();
-
-function saveDb() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-  fs.renameSync(tmp, DB_FILE); // atomic replace, so a crash never leaves a half-written file
-}
-
-const uid = () => crypto.randomUUID();
+const str = (v, max) => String(v ?? '').trim().slice(0, max);
+const cleanName = (v) => str(v, 80);
 
 function cleanCard(c) {
-  const s = (v, max) => String(v ?? '').trim().slice(0, max);
-  const card = { ko: s(c?.ko, 200), rom: s(c?.rom, 200), tr: s(c?.tr, 300) };
+  const card = { ko: str(c?.ko, 200), rom: str(c?.rom, 200), tr: str(c?.tr, 300) };
   return card.ko && card.tr ? card : null;
 }
 
-function addCards(folder, list) {
-  const key = (c) => c.ko + '\u0000' + c.tr;
-  const seen = new Set(folder.cards.map(key));
-  let added = 0;
-  for (const raw of Array.isArray(list) ? list : []) {
+function cleanCards(list) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(list) ? list.slice(0, 5000) : []) {
     const c = cleanCard(raw);
-    if (!c || seen.has(key(c))) continue;
-    seen.add(key(c));
-    folder.cards.push({ id: uid(), ...c, good: 0, bad: 0, box: 0, last: null });
-    added++;
+    const key = c && c.ko + '\u0000' + c.tr;
+    if (!c || seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
   }
-  return added;
+  return out;
 }
 
 /* ---------- API ---------- */
@@ -78,7 +65,7 @@ function readJson(req) {
     req.on('data', (c) => {
       size += c.length;
       if (size > 5 * 1024 * 1024) {
-        reject(new Error('Body too large'));
+        reject(Object.assign(new Error('Body too large'), { status: 400 }));
         req.destroy();
       } else chunks.push(c);
     });
@@ -86,12 +73,15 @@ function readJson(req) {
       try {
         resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {});
       } catch {
-        reject(new Error('Invalid JSON'));
+        reject(Object.assign(new Error('Invalid JSON'), { status: 400 }));
       }
     });
     req.on('error', reject);
   });
 }
+
+const NOT_FOLDER = { error: 'Folder not found' };
+const NOT_WORD = { error: 'Word not found' };
 
 async function handleApi(req, res, parts) {
   const method = req.method;
@@ -100,91 +90,58 @@ async function handleApi(req, res, parts) {
   if (resource !== 'folders') return send(res, 404, { error: 'Not found' });
 
   if (!fid) {
-    if (method === 'GET') return send(res, 200, db.folders);
+    if (method === 'GET') return send(res, 200, await store.listFolders());
     if (method === 'POST') {
-      const name = String(body.name || '').trim().slice(0, 80);
+      const name = cleanName(body.name);
       if (!name) return send(res, 400, { error: 'Folder name is required' });
-      const folder = { id: uid(), name, createdAt: Date.now(), cards: [], sessions: [] };
-      const added = addCards(folder, body.cards);
-      db.folders.push(folder);
-      saveDb();
-      return send(res, 201, { folder, added });
+      return send(res, 201, await store.createFolder(name, cleanCards(body.cards)));
     }
     return send(res, 405, { error: 'Method not allowed' });
   }
 
-  const folder = db.folders.find((f) => f.id === fid);
-  if (!folder) return send(res, 404, { error: 'Folder not found' });
-
   if (!sub) {
     if (method === 'PATCH') {
-      const name = String(body.name || '').trim().slice(0, 80);
+      const name = cleanName(body.name);
       if (!name) return send(res, 400, { error: 'Folder name is required' });
-      folder.name = name;
-      saveDb();
-      return send(res, 200, folder);
+      const folder = await store.renameFolder(fid, name);
+      return folder ? send(res, 200, folder) : send(res, 404, NOT_FOLDER);
     }
     if (method === 'DELETE') {
-      db.folders = db.folders.filter((f) => f !== folder);
-      saveDb();
-      return send(res, 200, { ok: true });
+      return (await store.deleteFolder(fid)) ? send(res, 200, { ok: true }) : send(res, 404, NOT_FOLDER);
     }
   }
 
   if (sub === 'cards' && !cid && method === 'POST') {
-    const added = addCards(folder, body.cards);
-    saveDb();
-    return send(res, 200, { folder, added });
+    const r = await store.addCards(fid, cleanCards(body.cards));
+    return r ? send(res, 200, r) : send(res, 404, NOT_FOLDER);
   }
 
   if (sub === 'cards' && cid) {
-    const card = folder.cards.find((c) => c.id === cid);
-    if (!card) return send(res, 404, { error: 'Word not found' });
     if (method === 'PATCH') {
-      const c = cleanCard({ ...card, ...body });
+      const c = cleanCard(body);
       if (!c) return send(res, 400, { error: 'Korean word and translation are required' });
-      Object.assign(card, c);
-      saveDb();
-      return send(res, 200, card);
+      const card = await store.updateCard(fid, cid, c);
+      return card ? send(res, 200, card) : send(res, 404, NOT_WORD);
     }
     if (method === 'DELETE') {
-      folder.cards = folder.cards.filter((c) => c !== card);
-      saveDb();
-      return send(res, 200, { ok: true });
+      return (await store.deleteCard(fid, cid)) ? send(res, 200, { ok: true }) : send(res, 404, NOT_WORD);
     }
   }
 
-  // One practice answer. Leitner-style box: correct moves up a box, wrong drops to 0.
   if (sub === 'answer' && method === 'POST') {
-    const card = folder.cards.find((c) => c.id === body.cardId);
-    if (!card) return send(res, 404, { error: 'Word not found' });
-    if (body.good) {
-      card.good++;
-      card.box = Math.min(5, card.box + 1);
-    } else {
-      card.bad++;
-      card.box = 0;
-    }
-    card.last = Date.now();
-    saveDb();
-    return send(res, 200, card);
+    const card = await store.answer(fid, String(body.cardId || ''), !!body.good);
+    return card ? send(res, 200, card) : send(res, 404, NOT_WORD);
   }
 
   if (sub === 'sessions' && method === 'POST') {
     const n = (v) => Math.max(0, Math.floor(Number(v) || 0));
     const mode = ['cards', 'match', 'test'].includes(body.mode) ? body.mode : 'cards';
-    const session = { at: Date.now(), mode, total: n(body.total), good: n(body.good), bad: n(body.bad) };
-    folder.sessions.push(session);
-    folder.sessions = folder.sessions.slice(-500);
-    saveDb();
-    return send(res, 201, session);
+    const session = await store.addSession(fid, { mode, total: n(body.total), good: n(body.good), bad: n(body.bad) });
+    return session ? send(res, 201, session) : send(res, 404, NOT_FOLDER);
   }
 
   if (sub === 'reset' && method === 'POST') {
-    for (const c of folder.cards) Object.assign(c, { good: 0, bad: 0, box: 0, last: null });
-    folder.sessions = [];
-    saveDb();
-    return send(res, 200, folder);
+    return (await store.resetFolder(fid)) ? send(res, 200, { ok: true }) : send(res, 404, NOT_FOLDER);
   }
 
   return send(res, 405, { error: 'Method not allowed' });
@@ -226,7 +183,12 @@ const server = http.createServer(async (req, res) => {
     try {
       await handleApi(req, res, parts.slice(1));
     } catch (err) {
-      send(res, 400, { error: err.message || 'Bad request' });
+      // Postgres codes from Supabase: 23505 duplicate word, 22P02 malformed id.
+      if (err.code === '23505') return send(res, 409, { error: 'That word is already in this folder' });
+      if (err.code === '22P02') return send(res, 404, { error: 'Not found' });
+      if (err.status === 400) return send(res, 400, { error: err.message });
+      console.error('Storage error:', err.code || '', err.message);
+      send(res, 500, { error: 'Storage error: ' + err.message });
     }
     return;
   }
@@ -239,7 +201,7 @@ server.listen(PORT, '0.0.0.0', () => {
     .filter((i) => i && i.family === 'IPv4' && !i.internal)
     .map((i) => `http://${i.address}:${PORT}`);
   console.log('\n  Korean flashcards running');
-  console.log(`  Laptop: http://localhost:${PORT}`);
-  for (const u of lan) console.log(`  Phone:  ${u}   (same Wi-Fi)`);
-  console.log(`  Data:   ${DB_FILE}\n`);
+  console.log(`  Laptop:  http://localhost:${PORT}`);
+  for (const u of lan) console.log(`  Phone:   ${u}   (same Wi-Fi)`);
+  console.log(`  Storage: ${store.label}\n`);
 });

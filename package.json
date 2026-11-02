@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "description": "Personal Korean flashcards: upload a word list, practice on phone or laptop.",
+  "engines": {
+    "node": ">=22.9"
+  },
   "scripts": {
-    "start": "node server.js"
+    "start": "node --env-file-if-exists=.env server.js",
+    "import": "node --env-file-if-exists=.env scripts/import-json.js"
   }
 }

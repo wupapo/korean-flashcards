@@ -9,7 +9,15 @@ npm start
 ```
 
 Open the printed URL: `http://localhost:3000` on the laptop, or the `Phone:` URL on a phone on the same Wi-Fi.
-No `npm install` needed (no dependencies). Words and progress are stored in `data/db.json`.
+No `npm install` needed (no dependencies). Needs Node 22.9+.
+
+## Storage
+
+- **Supabase** (when `.env` has `SUPABASE_URL` and `SUPABASE_SECRET_KEY`): copy `.env.example` to `.env` and paste the secret key from Supabase → Project Settings → API Keys. Schema: [`supabase/schema.sql`](supabase/schema.sql). Tables have RLS on with no policies, so only this server (secret key) can read or write; never ship the secret key to the browser.
+- **Local file** (no `.env`): `data/db.json`.
+- Move local data into Supabase once: `npm run import` (skips folders already there).
+
+The startup log line `Storage:` shows which one is active.
 
 ## Word file format
 
