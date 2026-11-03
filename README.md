@@ -31,9 +31,27 @@ One word per line, `.txt`. Reading (romanization) is optional; it is generated w
 
 Separators recognised: ` - `, tab, `|`, `;`, `=`, `:`, `,`. Lines starting with `#` are ignored.
 
+## Review (spaced repetition)
+
+The Review panel (home page for all folders, folder page for one) shows the words due today plus a few new ones.
+See the prompt, think of the answer, tap **Show answer**, then grade yourself:
+**Again** (back in a minute) · **Hard** · **Good** · **Easy**. Each button shows when the word will come back;
+good answers push it further out (1 day → 3 days → about a week → …).
+
+- Every word is scheduled twice: **Recognize** (Korean → meaning) and **Produce** (meaning → Korean).
+  With "Both", Produce starts once you've recognized the word.
+- Settings (gear icon): new words per day (counted across all folders) and which directions to review.
+- Keys: `Space` show answer, `1`–`4` grade, `S` listen. Code: [`docs/review.js`](docs/review.js).
+
 ## Practice modes
 
-Pick a mode on the folder page; its settings appear below it.
+Pick a mode on the folder page; its settings appear below it. "Mixed" direction leans toward the side
+you're weaker at (from your review schedule), and toward Produce for words not reviewed yet.
+
+### Write
+Type the answer yourself: the Korean in Hangul, or the meaning. Small typos in longer words still count
+(and are pointed out); typing the romanization instead of Hangul asks you to try again. A wrong answer
+shows the right one, and you type it once to continue. Code: [`docs/write.js`](docs/write.js).
 
 ### Match
 Grid of Korean words and translations (6 pairs per round). Tap a word, then its translation: a correct pair disappears, a wrong pair flashes red. Timer and mistake count on top; results list the tricky words.

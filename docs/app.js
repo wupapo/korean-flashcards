@@ -5,7 +5,7 @@ const $modal = document.getElementById('modal-root');
 const $toast = document.getElementById('toast');
 
 const MASTER_BOX = 3; // a word counts as mastered after 3 correct answers in a row
-const state = { user: null, folders: [], practice: null, game: null };
+const state = { user: null, folders: [], practice: null, game: null, review: null };
 
 /* ---------- helpers ---------- */
 
@@ -29,6 +29,7 @@ const ICONS = {
   edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   reset: '<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   signout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/>',
 };
 const icon = (n) =>
@@ -52,7 +53,11 @@ function shuffle(arr) {
   return a;
 }
 
-const PREF_DEFAULTS = { mode: 'cards', dir: 'ko', set: 'all', count: '20', repeat: true, qtype: 'mc', feedback: 'now' };
+const PREF_DEFAULTS = {
+  mode: 'cards', dir: 'ko', set: 'all', count: '20', repeat: true, qtype: 'mc', feedback: 'now',
+  wdir: 'mix', // write mode: type Korean / translation / mixed
+  rnew: '10', rdir: 'both', // review: new words per day, directions
+};
 function prefs() {
   try {
     return { ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('practicePrefs') || '{}') };
@@ -125,6 +130,39 @@ function progressBar(s) {
   const pct = (n) => (s.total ? (n / s.total) * 100 : 0);
   return `<div class="pbar" role="img" aria-label="${s.mastered} mastered, ${s.learning} learning, ${s.new} new">
     <i class="m" style="width:${pct(s.mastered)}%"></i><i class="l" style="width:${pct(s.learning)}%"></i></div>`;
+}
+
+// Which direction a word needs more: 'pro' (meaning -> Korean) or 'rec' (Korean -> meaning).
+// Uses the review schedule (shorter interval = weaker; never reviewed = weakest), else leans to the harder 'pro'.
+// Picks the weaker side 3 times out of 4 so the other direction still comes up.
+function weakerDir(card) {
+  const rec = card.reviews?.rec;
+  const pro = card.reviews?.pro;
+  const a = rec ? rec.interval : -1;
+  const b = pro ? pro.interval : -1;
+  if ((rec || pro) && a !== b) {
+    const weaker = b < a ? 'pro' : 'rec';
+    return Math.random() < 0.75 ? weaker : weaker === 'pro' ? 'rec' : 'pro';
+  }
+  return Math.random() < 0.6 ? 'pro' : 'rec';
+}
+
+// Words remembered for a week or longer, per direction.
+function directionBars(f) {
+  const total = f.cards.length || 1;
+  const row = (dir) => {
+    const n = f.cards.filter((c) => (c.reviews[dir]?.interval || 0) >= 7).length;
+    return `<div class="dir-row"><span>${DIR_LABEL[dir]}</span>
+      <div class="pbar thin"><i class="m" style="width:${(n / total) * 100}%"></i></div><b>${n}</b></div>`;
+  };
+  return `<div class="dir-bars" title="Words you remember for 7+ days">${row('rec')}${row('pro')}
+    <p class="muted small">Remembered 7+ days · Recognize: Korean → meaning · Produce: meaning → Korean</p></div>`;
+}
+
+function reviewStatus(r) {
+  if (!r) return 'not started';
+  const days = Math.round((r.due - Date.now()) / DAY);
+  return days <= 0 ? 'due now' : days === 1 ? 'next tomorrow' : `next in ${days} days`;
 }
 
 /* ---------- parsing uploaded text ---------- */
@@ -255,6 +293,7 @@ function renderHome() {
               <div><b>${mastered}</b><span>mastered</span></div>
               <div><b>${streak()}</b><span>day streak</span></div>
             </section>
+            ${reviewPanel('all')}
             <h2 class="section-title">Folders</h2>
             <ul class="folder-grid">${state.folders.map(folderTile).join('')}</ul>`
           : `<section class="empty">
@@ -449,10 +488,12 @@ function renderFolder(id) {
             <span>Sessions <b>${s.sessions}</b></span>
             <span>${ago(s.last)}</span>
           </div>
+          ${directionBars(f)}
         </section>
+        ${reviewPanel(f.id)}
         <section class="panel">
           <h2 class="panel-title">Practice</h2>
-          <div class="mode-tabs">${seg('mode', 'Mode', [['cards', 'Flashcards'], ['match', 'Match'], ['test', 'Test']], p.mode)}</div>
+          <div class="mode-tabs">${seg('mode', 'Mode', [['cards', 'Flashcards'], ['match', 'Match'], ['test', 'Test'], ['write', 'Write']], p.mode)}</div>
           <div id="practice-opts">${practiceOptions(f, p)}</div>
           <button class="btn btn-primary btn-lg btn-block" data-act="start" data-id="${f.id}" id="start-btn"></button>
         </section>
@@ -485,6 +526,11 @@ function practiceOptions(f, p) {
   if (p.mode === 'match') {
     return `${which}${count}<p class="opt-note">Tap a Korean word, then its translation. Correct pairs disappear, wrong pairs flash red.</p>`;
   }
+  if (p.mode === 'write') {
+    return `${seg('wdir', 'Type in', [['ko', 'Korean'], ['tr', 'Translation'], ['mix', 'Mixed']], p.wdir)}
+      ${which}${count}
+      <p class="opt-note">Type the answer yourself. Small typos still count. Mixed asks more often in the direction you're weaker at.</p>`;
+  }
   if (p.mode === 'test') {
     return `${seg('qtype', 'Question type', [['mc', 'Multiple choice'], ['tf', 'True / False'], ['mix', 'Mixed']], p.qtype)}
       ${seg('dir', 'Ask in', [['ko', 'Korean'], ['tr', 'Translation'], ['mix', 'Mixed']], p.dir)}
@@ -506,6 +552,7 @@ function updateStartButton(f) {
   const [min, label] =
     p.mode === 'match' ? [2, `Start match · ${n} words`]
     : p.mode === 'test' ? [1, `Start test · ${n} questions`]
+    : p.mode === 'write' ? [1, `Start writing · ${n} words`]
     : [1, `Start · ${n} cards`];
   const tooFew = p.mode === 'test' && f.cards.length < 2;
   btn.disabled = n < min || tooFew;
@@ -515,6 +562,7 @@ function updateStartButton(f) {
 function startSelected(folderId, p) {
   if (p.mode === 'match') return startMatch(folderId, p);
   if (p.mode === 'test') return startTest(folderId, p);
+  if (p.mode === 'write') return startWrite(folderId, p);
   return startPractice(folderId, p);
 }
 
@@ -566,6 +614,7 @@ function openWord(fid, cid) {
         <input id="w-rom" value="${esc(c.rom)}"></div>
       <label class="field"><span>Translation</span><input id="w-tr" value="${esc(c.tr)}" required></label>
       <p class="muted small">${STATUS_LABEL[cardStatus(c)]} · known ${c.good}× · missed ${c.bad}×</p>
+      <p class="muted small">Review · ${['rec', 'pro'].map((d) => `${DIR_LABEL[d]}: ${reviewStatus(c.reviews[d])}`).join(' · ')}</p>
       <div class="modal-actions">
         <button type="button" class="btn btn-danger-ghost" id="w-del">${icon('trash')} Delete</button><span class="spacer"></span>
         <button type="button" class="btn" data-act="close">Cancel</button><button class="btn btn-primary">Save</button>
@@ -636,11 +685,11 @@ function startPractice(folderId, opts) {
   if (!f) return;
   const pool = pickCards(f, opts);
   if (!pool.length) return toast('No words in this set yet');
-  const side = () => (opts.dir === 'mix' ? (Math.random() < 0.5 ? 'ko' : 'tr') : opts.dir);
+  const side = (c) => (opts.dir !== 'mix' ? opts.dir : weakerDir(c) === 'pro' ? 'tr' : 'ko');
   state.practice = {
     folderId,
     opts,
-    queue: pool.map((c) => ({ id: c.id, side: side(), tries: 0 })),
+    queue: pool.map((c) => ({ id: c.id, side: side(c), tries: 0 })),
     idx: 0,
     flipped: false,
     revealed: false, // true after "Don't know": answer is shown, waiting for Next
@@ -1038,7 +1087,7 @@ function startTest(folderId, opts) {
 }
 
 function makeQuestion(card, all, opts) {
-  const ask = opts.dir === 'mix' ? (Math.random() < 0.5 ? 'ko' : 'tr') : opts.dir;
+  const ask = opts.dir !== 'mix' ? opts.dir : weakerDir(card) === 'pro' ? 'tr' : 'ko';
   const ansSide = ask === 'ko' ? 'tr' : 'ko';
   // Up to 3 wrong answers from the folder, each with a different text than the right one.
   const seen = new Set([card[ansSide]]);
@@ -1213,7 +1262,13 @@ const currentFolderId = () => location.hash.split('/')[2];
 
 function speakCurrent() {
   const g = state.game;
-  const ko = currentView() === 'test' ? g?.questions[g.idx]?.card.ko : currentCard()?.ko;
+  const view = currentView();
+  const r = state.review;
+  const ko =
+    view === 'test' ? g?.questions[g.idx]?.card.ko
+    : view === 'write' ? g?.items[g.idx]?.card.ko
+    : view === 'review' ? r?.queue[r.idx]?.card.ko
+    : currentCard()?.ko;
   if (ko) speak(ko);
 }
 
@@ -1266,6 +1321,17 @@ document.addEventListener('click', (e) => {
     case 'match-tricky': return startMatch(g.folderId, { ...g.opts, ids: [...g.missed] });
     case 'test-again': return startTest(g.folderId, g.opts);
     case 'test-wrong': return startTest(g.folderId, { ...g.opts, ids: g.questions.filter((q) => !q.correct).map((q) => q.card.id) });
+    // write
+    case 'write-dontknow': return writeDontKnow();
+    case 'write-next': return nextWrite();
+    case 'write-again': return startWrite(g.folderId, g.opts);
+    case 'write-wrong': return startWrite(g.folderId, { ...g.opts, ids: g.items.filter((i) => i.result === 'wrong').map((i) => i.card.id) });
+    // review
+    case 'review-settings': return openReviewSettings();
+    case 'review-start': return startReview(id);
+    case 'review-show': return showReviewAnswer();
+    case 'grade': return gradeReview(+el.dataset.g);
+    case 'review-quit': return quitReview();
   }
 });
 
@@ -1311,6 +1377,7 @@ document.addEventListener('keydown', (e) => {
   const view = currentView();
   if (view === 'practice') flashcardKeys(e);
   else if (view === 'test') testKeys(e);
+  else if (view === 'review') reviewKeys(e);
 });
 
 /* ---------- routing ---------- */
@@ -1327,14 +1394,22 @@ function route() {
     stopTimer();
     state.game = null;
   }
+  if (view !== 'review' && state.review && !state.review.done) {
+    if (state.review.results.length) finishReview();
+    state.review = null;
+  }
+  if (view === 'review') {
+    if (state.review?.scope === id) return renderReview();
+    return go(id === 'all' || !id ? '/' : '/folder/' + id);
+  }
   if (view === 'folder') return renderFolder(id);
   if (view === 'practice') {
     if (state.practice?.folderId === id) return renderPractice();
     return go('/folder/' + id);
   }
-  if (view === 'match' || view === 'test') {
+  if (view === 'match' || view === 'test' || view === 'write') {
     const g = state.game;
-    if (g?.type === view && g.folderId === id) return view === 'match' ? renderMatch() : renderTest();
+    if (g?.type === view && g.folderId === id) return { match: renderMatch, test: renderTest, write: renderWrite }[view]();
     return go('/folder/' + id);
   }
   return renderHome();

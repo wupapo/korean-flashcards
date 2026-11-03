@@ -107,7 +107,7 @@ kbd { font: 600 11px var(--font); background: var(--surface); border: 1px solid 
   padding: 10px max(16px, env(safe-area-inset-right)) 10px max(16px, env(safe-area-inset-left));
 }
 .topbar-title { flex: 1; min-width: 0; margin: 0; font-size: 19px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.brand { flex: 1; display: flex; align-items: baseline; gap: 8px; }
+.brand { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
 .brand-mark { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; color: var(--accent); }
 .brand-sub { font-weight: 600; color: var(--ink-2); }
 .wrap {
@@ -180,7 +180,8 @@ kbd { font: 600 11px var(--font); background: var(--surface); border: 1px solid 
 .seg button span { max-width: 100%; text-align: center; overflow-wrap: anywhere; }
 .mode-tabs .seg-label { display: none; }
 .mode-tabs .seg { margin-bottom: 18px; }
-.mode-tabs .seg button { min-height: 46px; font-size: 15px; }
+.mode-tabs .seg { flex-wrap: wrap; }
+.mode-tabs .seg button { flex: 1 1 30%; min-height: 46px; font-size: 15px; }
 .mode-tabs .seg button[aria-checked='true'] { background: var(--accent); color: var(--accent-ink); }
 .opt-note { margin: -2px 0 18px; font-size: 13px; color: var(--ink-3); }
 .seg button small { font-size: 12px; font-weight: 500; color: var(--ink-3); font-variant-numeric: tabular-nums; }
@@ -289,6 +290,7 @@ kbd { font: 600 11px var(--font); background: var(--surface); border: 1px solid 
   display: grid; grid-template-rows: auto 1fr auto auto;
   padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
 }
+.practice > * { min-width: 0; }
 .p-top { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
 .bar { flex: 1; height: 6px; border-radius: 99px; overflow: hidden; background: var(--surface-2); }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 99px; transition: width 0.3s; }
@@ -419,6 +421,55 @@ kbd { font: 600 11px var(--font); background: var(--surface); border: 1px solid 
 .review .your { margin-top: 2px; font-size: 14px; color: var(--bad); }
 .review .your .a-ko { display: inline; }
 
+/* ---------- review (spaced repetition) ---------- */
+.review-panel .list-head { margin-bottom: 8px; }
+.review-counts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.review-counts div { padding: 10px 14px; border-radius: 14px; background: var(--surface-2); }
+.review-counts b { display: block; font-size: 26px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.review-counts span { font-size: 13px; color: var(--ink-2); }
+.review-done { display: flex; align-items: center; gap: 8px; margin: 4px 0 2px; font-weight: 650; color: var(--good); }
+.review-card .f-ko, .review-card .f-tr { margin: 4px 0; }
+.review-answer { width: 100%; margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--line); animation: card-in 0.2s ease; }
+.new-tag { position: absolute; top: 16px; right: 16px; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-soft); }
+.grades { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.grade { height: auto; min-height: 60px; padding: 8px 4px; flex-direction: column; gap: 2px; border-color: transparent; }
+.grade b { font-size: 15px; }
+.grade small { font-size: 12px; font-weight: 500; opacity: 0.8; }
+.grade.g1 { background: var(--bad-soft); color: var(--bad); }
+.grade.g2 { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.grade.g3 { background: var(--good-soft); color: var(--good); }
+.grade.g4 { background: var(--accent-soft); color: var(--accent); }
+.grade:hover { border-color: currentColor; }
+.dir-bars { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.dir-row { display: grid; grid-template-columns: 76px 1fr 32px; align-items: center; gap: 10px; font-size: 14px; color: var(--ink-2); }
+.dir-row b { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pbar.thin { height: 6px; margin: 6px 0; }
+.dir-bars p { margin: 6px 0 0; }
+
+/* ---------- write ---------- */
+.write-form { display: flex; gap: 10px; }
+.write-form input {
+  flex: 1; width: 0; min-width: 0; /* width: 0 drops the input's built-in minimum width so it fits phones */ height: 56px; padding: 0 16px; font-size: 20px; font-weight: 600;
+  border: 2px solid var(--line); border-radius: 16px; background: var(--surface); outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.write-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.write-form input.ok { border-color: var(--good); background: var(--good-soft); }
+.write-form input.no { border-color: var(--bad); background: var(--bad-soft); }
+.write-form input.shake { animation: shake 0.4s; border-color: var(--bad); }
+.w-feedback { min-height: 24px; text-align: center; font-size: 16px; font-weight: 600; }
+.w-feedback.ok { color: var(--good); }
+.w-feedback.hint { color: var(--warn); }
+.w-feedback.no { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.w-answer { display: flex; flex-direction: column; align-items: center; padding: 10px 20px; border-radius: 14px; background: var(--bad-soft); color: var(--bad); }
+.w-answer b { font-size: 26px; }
+.w-answer small { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.8; }
+.w-answer small:last-child { text-transform: none; letter-spacing: 0; }
+.w-copy-hint { font-size: 14px; color: var(--ink-2); }
+.review.typo .mark { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.review .your { color: var(--ink-2); }
+.review.no .your { color: var(--bad); }
+
 /* ---------- results ---------- */
 .results { max-width: 560px; padding-top: calc(48px + env(safe-area-inset-top)); text-align: center; }
 .results h1 { margin: 0 0 6px; font-size: 28px; }
@@ -442,6 +493,7 @@ kbd { font: 600 11px var(--font); background: var(--surface); border: 1px solid 
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-width: 420px) {
+  .brand-sub { display: none; }
   .summary b, .stat b { font-size: 24px; }
 }
 

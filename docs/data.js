@@ -4,7 +4,14 @@
 
 function createDb(sb) {
   const ms = (t) => (t ? Date.parse(t) : null);
-  const toCard = (r) => ({ id: r.id, ko: r.ko, rom: r.rom, tr: r.tr, good: r.good, bad: r.bad, box: r.box, last: ms(r.last_seen) });
+  const toReview = (r) => ({
+    due: ms(r.due), interval: r.interval_days, ease: r.ease, reps: r.reps, lapses: r.lapses, createdAt: ms(r.created_at),
+  });
+  const toCard = (r) => ({
+    id: r.id, folderId: r.folder_id, ko: r.ko, rom: r.rom, tr: r.tr, good: r.good, bad: r.bad, box: r.box, last: ms(r.last_seen),
+    // Spaced repetition per direction: rec = Korean -> meaning, pro = meaning -> Korean. Missing = never reviewed.
+    reviews: Object.fromEntries((r.reviews || []).map((v) => [v.dir, toReview(v)])),
+  });
   const toSession = (r) => ({ at: ms(r.at), mode: r.mode, total: r.total, good: r.good, bad: r.bad });
   const toFolder = (r) => ({
     id: r.id,
@@ -50,7 +57,11 @@ function createDb(sb) {
       const rows = check(
         await sb
           .from('folders')
-          .select('id,name,created_at,cards(id,ko,rom,tr,good,bad,box,last_seen),sessions(at,mode,total,good,bad)')
+          .select(
+            'id,name,created_at,' +
+              'cards(id,folder_id,ko,rom,tr,good,bad,box,last_seen,reviews(dir,due,interval_days,ease,reps,lapses,created_at)),' +
+              'sessions(at,mode,total,good,bad)'
+          )
           .order('created_at')
           .order('seq', { referencedTable: 'cards' })
           .order('at', { referencedTable: 'sessions', ascending: false })
@@ -94,6 +105,11 @@ function createDb(sb) {
     // Atomic in the database: correct moves the Leitner box up (max 5), wrong drops it to 0.
     async answer(folderId, cardId, good) {
       check(await sb.rpc('record_answer', { p_folder: folderId, p_card: cardId, p_good: !!good }));
+    },
+
+    // Spaced repetition grade (1 again, 2 hard, 3 good, 4 easy); the database computes the next due date.
+    async recordReview(cardId, dir, grade) {
+      return toReview(check(await sb.rpc('record_review', { p_card: cardId, p_dir: dir, p_grade: grade })));
     },
 
     async addSession(folderId, session) {
