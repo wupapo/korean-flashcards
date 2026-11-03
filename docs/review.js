@@ -156,10 +156,12 @@ function renderReview() {
   drawReviewItem();
 }
 
-function reviewSide(card, side) {
-  return side === 'ko'
-    ? `<div class="f-ko" lang="ko">${esc(card.ko)}</div>${card.rom ? `<div class="f-rom">${esc(card.rom)}</div>` : ''}`
-    : `<div class="f-tr">${esc(card.tr)}</div>`;
+// where: 'prompt' (being asked) or 'answer' (revealed), for the romanization setting.
+// A reading hidden while asking ("After answer" setting) is still rendered, and revealed with the answer.
+function reviewSide(card, side, where) {
+  if (side !== 'ko') return `<div class="f-tr">${esc(card.tr)}</div>`;
+  const later = where === 'prompt' && !romText(card, 'prompt') && romText(card, 'answer');
+  return `<div class="f-ko" lang="ko">${esc(card.ko)}</div>${later ? `<div class="f-rom" data-reveal hidden>${esc(card.rom)}</div>` : romHtml(card, where)}`;
 }
 
 function drawReviewItem() {
@@ -172,8 +174,9 @@ function drawReviewItem() {
   document.getElementById('rv').innerHTML = `
     <div class="t-prompt review-card enter">
       <span class="face-label">${dir === 'rec' ? 'What does it mean?' : 'How do you say it in Korean?'}</span>${tag}
-      ${reviewSide(card, front)}
-      <div class="review-answer" id="rv-answer" hidden>${reviewSide(card, back)}</div>
+      ${reviewSide(card, front, 'prompt')}
+      <div class="hint-wrap">${hintHtml(card)}</div>
+      <div class="review-answer" id="rv-answer" hidden>${reviewSide(card, back, 'answer')}${extrasHtml(card)}</div>
       <button class="speak" data-act="speak" aria-label="Listen">${icon('sound')}</button>
     </div>
     <p class="p-hint">${DIR_LABEL[dir]} · ${s.shown ? '' : 'Think of the answer, then show it'}</p>`;
@@ -202,6 +205,8 @@ function showReviewAnswer() {
   if (!s || s.done || s.shown) return;
   s.shown = true;
   document.getElementById('rv-answer').hidden = false;
+  document.querySelector('#rv .hint-wrap').hidden = true;
+  document.querySelectorAll('#rv [data-reveal]').forEach((el) => (el.hidden = false));
   document.querySelector('#rv .speak').hidden = false;
   document.querySelector('#rv .p-hint').textContent = 'How well did you remember it?';
   drawReviewActions();
@@ -225,7 +230,8 @@ function gradeReview(grade) {
     reps: grade === 1 ? 0 : (prev?.reps || 0) + 1,
     due: Date.now() + (grade === 1 ? 60e3 : days * DAY),
   };
-  db.recordReview(card.id, dir, grade)
+  countActivity(1);
+  db.recordReview(card.id, dir, grade, localDay())
     .then((r) => (card.reviews[dir] = r))
     .catch(() => toast('Not saved: no connection'));
 

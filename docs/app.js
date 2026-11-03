@@ -5,7 +5,7 @@ const $modal = document.getElementById('modal-root');
 const $toast = document.getElementById('toast');
 
 const MASTER_BOX = 3; // a word counts as mastered after 3 correct answers in a row
-const state = { user: null, folders: [], practice: null, game: null, review: null };
+const state = { user: null, folders: [], activity: new Map(), practice: null, game: null, review: null };
 
 /* ---------- helpers ---------- */
 
@@ -30,6 +30,7 @@ const ICONS = {
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   reset: '<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"/>',
   signout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/>',
 };
 const icon = (n) =>
@@ -57,6 +58,10 @@ const PREF_DEFAULTS = {
   mode: 'cards', dir: 'ko', set: 'all', count: '20', repeat: true, qtype: 'mc', feedback: 'now',
   wdir: 'mix', // write mode: type Korean / translation / mixed
   rnew: '10', rdir: 'both', // review: new words per day, directions
+  lmode: 'mc', // listen mode: answer by choosing the meaning or writing it
+  rom: 'show', // romanization: 'show' always, 'flip' once the answer is shown, 'hide' never
+  goal: '30', // daily goal, in answers
+  mix: [], // folder ids in "Mixed folders" (empty = all)
 };
 function prefs() {
   try {
@@ -76,12 +81,73 @@ function go(path) {
   else location.hash = path;
 }
 
-const getFolder = (id) => state.folders.find((f) => f.id === id);
+// "Mixed folders": a virtual folder with the words of the folders picked on its page (all by default).
+const MIX = 'mix';
+function mixFolder() {
+  const picked = prefs().mix;
+  let folders = state.folders.filter((f) => picked.includes(f.id));
+  if (!folders.length) folders = state.folders;
+  return {
+    id: MIX, name: 'Mixed folders', virtual: true, createdAt: 0,
+    cards: folders.flatMap((f) => f.cards), // the real card objects, so progress updates show everywhere
+    sessions: folders.flatMap((f) => f.sessions).sort((a, b) => a.at - b.at),
+  };
+}
+
+const getFolder = (id) => (id === MIX ? (state.folders.length ? mixFolder() : undefined) : state.folders.find((f) => f.id === id));
 const getCard = (fid, cid) => getFolder(fid)?.cards.find((c) => c.id === cid);
 
 async function loadFolders() {
-  state.folders = await db.listFolders();
+  [state.folders, state.activity] = await Promise.all([db.listFolders(), db.activity()]);
 }
+
+/* ---------- daily goal ---------- */
+
+const localDay = (t = Date.now()) => {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const todayCount = () => state.activity.get(localDay()) || 0;
+
+// Local mirror of the database's activity count (the server counts the same answers).
+function countActivity(n) {
+  const before = todayCount();
+  state.activity.set(localDay(), before + n);
+  const goal = +prefs().goal;
+  if (before < goal && before + n >= goal) toast(`Daily goal reached: ${goal} answers`);
+}
+
+/* ---------- romanization, examples, hints ---------- */
+
+// The reading under a Korean word, following the romanization setting. where: 'prompt' (being asked) or 'answer'.
+function romText(card, where) {
+  const r = prefs().rom;
+  return !card.rom || r === 'hide' || (r === 'flip' && where === 'prompt') ? '' : card.rom;
+}
+const romHtml = (card, where) => (romText(card, where) ? `<div class="f-rom">${esc(romText(card, where))}</div>` : '');
+
+// Example sentences are written "Korean sentence = translation".
+function exampleParts(ex) {
+  const i = ex.indexOf('=');
+  return i < 0 ? [ex.trim(), ''] : [ex.slice(0, i).trim(), ex.slice(i + 1).trim()];
+}
+
+// Example sentence and memory hint, shown wherever the answer is revealed.
+function extrasHtml(card) {
+  let html = '';
+  if (card.ex) {
+    const [ko, tr] = exampleParts(card.ex);
+    html += `<div class="extra ex">
+      <button class="ex-speak" data-act="speak-word" data-ko="${esc(ko)}" aria-label="Listen to the example">${icon('sound')}</button>
+      <span><span lang="ko">${esc(ko)}</span>${tr ? `<small>${esc(tr)}</small>` : ''}</span></div>`;
+  }
+  if (card.note) html += `<div class="extra note">${icon('bulb')}<span>${esc(card.note)}</span></div>`;
+  return html ? `<div class="extras">${html}</div>` : '';
+}
+
+// A "Hint" button on the question side that reveals the memory hint without giving the answer.
+const hintHtml = (card) =>
+  card.note ? `<button class="hint-btn" data-act="hint">${icon('bulb')} Hint</button><div class="hint-text" hidden>${esc(card.note)}</div>` : '';
 
 /* ---------- stats ---------- */
 
@@ -101,14 +167,13 @@ function folderStats(f) {
   return s;
 }
 
-const dayKey = (t) => new Date(t).toDateString();
 function streak() {
-  const days = new Set();
-  for (const f of state.folders) for (const s of f.sessions) days.add(dayKey(s.at));
+  const days = new Set([...state.activity].filter(([, n]) => n > 0).map(([day]) => day));
+  for (const f of state.folders) for (const s of f.sessions) days.add(localDay(s.at));
   const d = new Date();
-  if (!days.has(dayKey(d))) d.setDate(d.getDate() - 1); // streak survives until the end of today
+  if (!days.has(localDay(d))) d.setDate(d.getDate() - 1); // streak survives until the end of today
   let n = 0;
-  while (days.has(dayKey(d))) {
+  while (days.has(localDay(d))) {
     n++;
     d.setDate(d.getDate() - 1);
   }
@@ -203,8 +268,11 @@ function parseText(text) {
   text.split(/\r?\n/).forEach((line, i) => {
     const t = line.trim();
     if (!t || t.startsWith('#') || t.startsWith('//')) return;
-    const c = parseLine(t);
+    // An example sentence can follow "::", e.g. 사과 (sagwa) - olma :: 사과를 먹어요 = olma yeyman
+    const exAt = t.indexOf('::');
+    const c = parseLine(exAt < 0 ? t : t.slice(0, exAt));
     if (!c) return skipped.push({ n: i + 1, line: t });
+    c.ex = exAt < 0 ? '' : t.slice(exAt + 2).trim();
     const key = c.ko + '\u0000' + c.tr;
     if (seen.has(key)) return;
     seen.add(key);
@@ -278,23 +346,26 @@ function promptDialog({ title, value = '', ok = 'Save' }) {
 function renderHome() {
   document.title = '단어 · Flashcards';
   const words = state.folders.reduce((n, f) => n + f.cards.length, 0);
-  const mastered = state.folders.reduce((n, f) => n + folderStats(f).mastered, 0);
+  const goal = +prefs().goal;
+  const today = todayCount();
   $app.innerHTML = `
     <header class="topbar"><div class="topbar-in">
       <div class="brand"><span class="brand-mark" lang="ko">단어</span><span class="brand-sub">Flashcards</span></div>
-      <button class="icon-btn" data-act="signout" aria-label="Sign out" title="Sign out">${icon('signout')}</button>
+      <button class="icon-btn" data-act="settings" aria-label="Settings" title="Settings">${icon('gear')}</button>
       <button class="btn btn-primary" data-act="upload">${icon('upload')}<span>Upload words</span></button>
     </div></header>
     <main class="wrap">
       ${
         state.folders.length
           ? `<section class="summary">
-              <div><b>${words}</b><span>words</span></div>
-              <div><b>${mastered}</b><span>mastered</span></div>
+              <div class="goal-box ${today >= goal ? 'done' : ''}"><b>${today}<small>/${goal}</small></b><span>today</span>
+                <div class="pbar thin"><i class="m" style="width:${Math.min(100, (today / goal) * 100)}%"></i></div></div>
               <div><b>${streak()}</b><span>day streak</span></div>
+              <div><b>${words}</b><span>words</span></div>
             </section>
             ${reviewPanel('all')}
-            <h2 class="section-title">Folders</h2>
+            <div class="list-head section-head"><h2 class="section-title">Folders</h2>
+              ${state.folders.length >= 2 ? `<a class="btn btn-sm" href="#/folder/${MIX}">${icon('play')} Mix folders</a>` : ''}</div>
             <ul class="folder-grid">${state.folders.map(folderTile).join('')}</ul>`
           : `<section class="empty">
               <div class="empty-mark" lang="ko">가</div>
@@ -332,7 +403,8 @@ function openUpload(presetFolderId = '') {
     </label>
     <details class="paste"><summary>Paste text instead</summary>
       <textarea id="paste" rows="5" placeholder="사과 (sagwa) - olma&#10;학교 - maktab"></textarea></details>
-    <p class="hint">One word per line, like <code>사과 (sagwa) - olma</code>. The reading is optional and is filled in automatically when missing.</p>
+    <p class="hint">One word per line, like <code>사과 (sagwa) - olma</code>. The reading is optional and is filled in automatically when missing.
+      Add an example sentence after <code>::</code>, like <code>사과 - olma :: 사과를 먹어요 = olma yeyman</code>.</p>
     <div id="preview"></div>
     <div class="field-row">
       <label class="field"><span>Save to</span>
@@ -364,7 +436,7 @@ function openUpload(presetFolderId = '') {
           <ul class="preview-list">${cards
             .map(
               (c, i) => `<li><span lang="ko"><b>${esc(c.ko)}</b><span class="rom">${esc(c.rom)}${c.auto ? ' <em>auto</em>' : ''}</span></span>
-                <span>${esc(c.tr)}</span>
+                <span>${esc(c.tr)}${c.ex ? `<small class="ex-prev" lang="ko">${esc(c.ex)}</small>` : ''}</span>
                 <button class="x-btn" data-i="${i}" aria-label="Remove ${esc(c.ko)}">${icon('close')}</button></li>`
             )
             .join('')}</ul>
@@ -409,7 +481,7 @@ function openUpload(presetFolderId = '') {
 
   save.onclick = async () => {
     save.disabled = true;
-    const body = { cards: parsed.cards.map(({ ko, rom, tr }) => ({ ko, rom, tr })) };
+    const body = { cards: parsed.cards.map(({ ko, rom, tr, ex }) => ({ ko, rom, tr, ex })) };
     try {
       let fid, added;
       if (target.value) {
@@ -471,10 +543,11 @@ function renderFolder(id) {
     <header class="topbar"><div class="topbar-in">
       <a class="icon-btn" href="#/" aria-label="Back to folders">${icon('back')}</a>
       <h1 class="topbar-title">${esc(f.name)}</h1>
-      <button class="icon-btn" data-act="folder-menu" data-id="${f.id}" aria-label="Folder options">${icon('more')}</button>
+      ${f.virtual ? '' : `<button class="icon-btn" data-act="folder-menu" data-id="${f.id}" aria-label="Folder options">${icon('more')}</button>`}
     </div></header>
     <main class="wrap folder-page">
       <div class="col-left">
+        ${f.virtual ? mixPicker() : ''}
         <section class="panel">
           <div class="stats-grid">
             <div class="stat"><b>${s.total}</b><span>Words</span></div>
@@ -493,14 +566,14 @@ function renderFolder(id) {
         ${reviewPanel(f.id)}
         <section class="panel">
           <h2 class="panel-title">Practice</h2>
-          <div class="mode-tabs">${seg('mode', 'Mode', [['cards', 'Flashcards'], ['match', 'Match'], ['test', 'Test'], ['write', 'Write']], p.mode)}</div>
+          <div class="mode-tabs">${seg('mode', 'Mode', [['cards', 'Flashcards'], ['match', 'Match'], ['test', 'Test'], ['write', 'Write'], ['listen', 'Listen']], p.mode)}</div>
           <div id="practice-opts">${practiceOptions(f, p)}</div>
           <button class="btn btn-primary btn-lg btn-block" data-act="start" data-id="${f.id}" id="start-btn"></button>
         </section>
       </div>
       <section class="panel">
         <div class="list-head"><h2 class="panel-title">Words</h2>
-          <button class="btn btn-sm" data-act="upload" data-id="${f.id}">${icon('plus')} Add words</button></div>
+          ${f.virtual ? '' : `<button class="btn btn-sm" data-act="upload" data-id="${f.id}">${icon('plus')} Add words</button>`}</div>
         ${f.cards.length > 8 ? `<div class="search">${icon('search')}<input id="q" type="search" placeholder="Search words" autocomplete="off"></div>` : ''}
         <ul class="word-list" id="words">${f.cards.length ? wordRows(f.cards) : '<li class="muted empty-list">No words yet.</li>'}</ul>
       </section>
@@ -516,6 +589,26 @@ function renderFolder(id) {
     };
 }
 
+function mixPicker() {
+  const picked = prefs().mix.filter((id) => state.folders.some((f) => f.id === id));
+  const on = (f) => !picked.length || picked.includes(f.id);
+  return `<section class="panel"><h2 class="panel-title">Folders in the mix</h2>
+    <div class="chips">${state.folders
+      .map((f) => `<button class="chip" aria-pressed="${on(f)}" data-act="mix-toggle" data-id="${f.id}">${esc(f.name)} <small>${f.cards.length}</small></button>`)
+      .join('')}</div></section>`;
+}
+
+function toggleMix(id) {
+  const all = state.folders.map((f) => f.id);
+  const picked = prefs().mix.filter((x) => all.includes(x));
+  const current = picked.length ? picked : all;
+  let next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
+  if (!next.length) return toast('Keep at least one folder');
+  if (next.length === all.length) next = [];
+  setPref('mix', next);
+  route();
+}
+
 function practiceOptions(f, p) {
   const which = seg('set', 'Which words', [
     ['all', 'All', f.cards.length],
@@ -525,6 +618,11 @@ function practiceOptions(f, p) {
   const count = seg('count', 'How many', [['10', '10'], ['20', '20'], ['all', 'All']], p.count);
   if (p.mode === 'match') {
     return `${which}${count}<p class="opt-note">Tap a Korean word, then its translation. Correct pairs disappear, wrong pairs flash red.</p>`;
+  }
+  if (p.mode === 'listen') {
+    return `${seg('lmode', 'Answer by', [['mc', 'Choosing the meaning'], ['write', 'Writing it in Korean']], p.lmode)}
+      ${which}${count}
+      <p class="opt-note">You hear each word without seeing it. Uses your device's Korean voice.</p>`;
   }
   if (p.mode === 'write') {
     return `${seg('wdir', 'Type in', [['ko', 'Korean'], ['tr', 'Translation'], ['mix', 'Mixed']], p.wdir)}
@@ -553,8 +651,9 @@ function updateStartButton(f) {
     p.mode === 'match' ? [2, `Start match · ${n} words`]
     : p.mode === 'test' ? [1, `Start test · ${n} questions`]
     : p.mode === 'write' ? [1, `Start writing · ${n} words`]
+    : p.mode === 'listen' ? [1, `Start listening · ${n} words`]
     : [1, `Start · ${n} cards`];
-  const tooFew = p.mode === 'test' && f.cards.length < 2;
+  const tooFew = (p.mode === 'test' || (p.mode === 'listen' && p.lmode === 'mc')) && f.cards.length < 2;
   btn.disabled = n < min || tooFew;
   btn.innerHTML = !btn.disabled ? `${icon('play')} ${label}` : n && n < min || tooFew ? 'Needs at least 2 words' : 'No words in this set';
 }
@@ -563,7 +662,29 @@ function startSelected(folderId, p) {
   if (p.mode === 'match') return startMatch(folderId, p);
   if (p.mode === 'test') return startTest(folderId, p);
   if (p.mode === 'write') return startWrite(folderId, p);
+  if (p.mode === 'listen') return startListen(folderId, p);
   return startPractice(folderId, p);
+}
+
+function openSettings() {
+  const p = prefs();
+  const sheet = showModal(`<h2 class="modal-title">Settings</h2>
+    ${seg('rom', 'Show romanization', [['show', 'Always'], ['flip', 'After answer'], ['hide', 'Never']], p.rom)}
+    <p class="opt-note">"After answer" hides the reading while you're being asked, so you practice reading Hangul.</p>
+    ${seg('goal', 'Daily goal (answers)', [['10', '10'], ['20', '20'], ['30', '30'], ['50', '50'], ['100', '100']], p.goal)}
+    <p class="opt-note">Every answer counts: flashcards, test, write, listen, review and match pairs.</p>
+    <div class="modal-actions">
+      <button class="btn btn-danger-ghost" id="st-out">${icon('signout')} Sign out</button><span class="spacer"></span>
+      <button class="btn btn-primary" id="st-done">Done</button>
+    </div>`);
+  sheet.querySelector('#st-done').onclick = () => {
+    closeModal();
+    route();
+  };
+  sheet.querySelector('#st-out').onclick = async () => {
+    const ok = await confirmDialog({ title: 'Sign out?', text: 'Your words stay saved in your account.', ok: 'Sign out' });
+    if (ok) db.auth.signOut();
+  };
 }
 
 function openFolderMenu(fid) {
@@ -613,6 +734,10 @@ function openWord(fid, cid) {
       <div class="field"><span><label for="w-rom">Reading</label><button type="button" class="link" id="w-auto">Generate</button></span>
         <input id="w-rom" value="${esc(c.rom)}"></div>
       <label class="field"><span>Translation</span><input id="w-tr" value="${esc(c.tr)}" required></label>
+      <label class="field"><span>Example sentence <small>Korean = translation</small></span>
+        <input id="w-ex" value="${esc(c.ex)}" maxlength="300" lang="ko" placeholder="사과를 먹어요 = olma yeyman"></label>
+      <label class="field"><span>Memory hint</span>
+        <input id="w-note" value="${esc(c.note)}" maxlength="300" placeholder="Your own trick to remember it"></label>
       <p class="muted small">${STATUS_LABEL[cardStatus(c)]} · known ${c.good}× · missed ${c.bad}×</p>
       <p class="muted small">Review · ${['rec', 'pro'].map((d) => `${DIR_LABEL[d]}: ${reviewStatus(c.reviews[d])}`).join(' · ')}</p>
       <div class="modal-actions">
@@ -625,7 +750,9 @@ function openWord(fid, cid) {
   $('#w-form').onsubmit = async (e) => {
     e.preventDefault();
     try {
-      await db.updateCard(cid, { ko: $('#w-ko').value, rom: $('#w-rom').value, tr: $('#w-tr').value });
+      await db.updateCard(cid, {
+        ko: $('#w-ko').value, rom: $('#w-rom').value, tr: $('#w-tr').value, ex: $('#w-ex').value, note: $('#w-note').value,
+      });
       await loadFolders();
       closeModal();
       route();
@@ -669,10 +796,13 @@ function recordAnswer(folderId, cardId, good) {
     }
     c.last = Date.now();
   }
-  db.answer(folderId, cardId, good).catch(() => toast('Not saved: no connection'));
+  countActivity(1);
+  // c.folderId: in "Mixed folders" the word's own folder.
+  db.answer(c?.folderId || folderId, cardId, good, localDay()).catch(() => toast('Not saved: no connection'));
 }
 
 function saveSession(folderId, session) {
+  if (folderId === MIX) return; // answers in a mix still count per word and toward the daily goal
   getFolder(folderId)?.sessions.push({ at: Date.now(), ...session });
   db.addSession(folderId, session).catch(() => {});
 }
@@ -717,13 +847,17 @@ function renderPractice() {
   drawCard();
 }
 
+// q is passed for the front (question) side only.
 function face(c, side, q) {
   const again = q?.tries ? '<span class="again-tag">Again</span>' : '';
+  const more = q ? hintHtml(c) : extrasHtml(c);
   if (side === 'ko')
     return `${again}<span class="face-label">한국어</span><div class="f-ko" lang="ko">${esc(c.ko)}</div>
-      ${c.rom ? `<div class="f-rom">${esc(c.rom)}</div>` : ''}
+      ${romHtml(c, q ? 'prompt' : 'answer')}${more}
       <button class="speak" data-act="speak" aria-label="Listen">${icon('sound')}</button>`;
-  return `${again}<span class="face-label">Translation</span><div class="f-tr">${esc(c.tr)}</div>`;
+  // Answer side of a Korean-first card: show the reading that "After answer" hid on the front.
+  const reading = !q && prefs().rom === 'flip' && c.rom ? `<div class="f-rom back-reading" lang="ko">${esc(c.ko)} · ${esc(c.rom)}</div>` : '';
+  return `${again}<span class="face-label">Translation</span><div class="f-tr">${esc(c.tr)}</div>${reading}${more}`;
 }
 
 function drawCard() {
@@ -888,14 +1022,14 @@ function attachSwipe() {
   });
 }
 
-function speak(text) {
+function speak(text, rate = 0.9) {
   if (!('speechSynthesis' in window)) return toast('Speech is not supported in this browser');
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'ko-KR';
   const voice = speechSynthesis.getVoices().find((v) => v.lang?.toLowerCase().startsWith('ko'));
   if (voice) u.voice = voice;
-  u.rate = 0.9;
+  u.rate = rate;
   speechSynthesis.speak(u);
 }
 
@@ -907,7 +1041,7 @@ const currentCard = () => {
 /* ---------- match ---------- */
 
 const MATCH_ROUND = 6; // pairs per screen: 12 tiles fit a phone without scrolling
-const snap = (c) => ({ id: c.id, ko: c.ko, rom: c.rom, tr: c.tr });
+const snap = (c) => ({ id: c.id, ko: c.ko, rom: c.rom, tr: c.tr, ex: c.ex, note: c.note });
 const fmtTime = (ms) => {
   const s = Math.round(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -969,7 +1103,7 @@ function drawRound() {
   grid.innerHTML = g.tiles
     .map(({ card, side, key }) =>
       side === 'ko'
-        ? `<button class="tile-m ko" data-act="tile" data-key="${key}" lang="ko"><b>${esc(card.ko)}</b>${card.rom ? `<small>${esc(card.rom)}</small>` : ''}</button>`
+        ? `<button class="tile-m ko" data-act="tile" data-key="${key}" lang="ko"><b>${esc(card.ko)}</b>${romText(card, 'prompt') ? `<small>${esc(card.rom)}</small>` : ''}</button>`
         : `<button class="tile-m tr" data-act="tile" data-key="${key}">${esc(card.tr)}</button>`
     )
     .join('');
@@ -1049,6 +1183,8 @@ function finishMatch() {
   stopTimer();
   const bad = Math.min(g.missed.size, g.total);
   saveSession(g.folderId, { mode: 'match', total: g.total, good: g.total - bad, bad });
+  countActivity(g.total);
+  db.logActivity(localDay(), g.total).catch(() => {});
   renderMatchResults();
 }
 
@@ -1112,7 +1248,7 @@ function makeQuestion(card, all, opts) {
 
 function answerText(card, side, withRom = true) {
   return side === 'ko'
-    ? `<span class="a-ko" lang="ko"><b>${esc(card.ko)}</b>${withRom && card.rom ? `<small>${esc(card.rom)}</small>` : ''}</span>`
+    ? `<span class="a-ko" lang="ko"><b>${esc(card.ko)}</b>${withRom && romText(card, 'prompt') ? `<small>${esc(card.rom)}</small>` : ''}</span>`
     : `<span class="a-tr">${esc(card.tr)}</span>`;
 }
 
@@ -1142,7 +1278,7 @@ function drawQuestion() {
 
   const prompt =
     q.ask === 'ko'
-      ? `<div class="f-ko" lang="ko">${esc(q.card.ko)}</div>${q.card.rom ? `<div class="f-rom">${esc(q.card.rom)}</div>` : ''}
+      ? `<div class="f-ko" lang="ko">${esc(q.card.ko)}</div>${romHtml(q.card, 'prompt')}
          <button class="speak" data-act="speak" aria-label="Listen">${icon('sound')}</button>`
       : `<div class="f-tr">${esc(q.card.tr)}</div>`;
   let label, body;
@@ -1197,7 +1333,7 @@ function answerTest(v) {
   }
   btns[q.type === 'mc' ? q.options.findIndex((o) => o.id === q.card.id) : q.truth ? 0 : 1].classList.add('right');
   fb.className = 't-feedback no';
-  fb.innerHTML = `${esc(q.card.ko)} = ${esc(q.card.tr)}`;
+  fb.innerHTML = `${esc(q.card.ko)} = ${esc(q.card.tr)}${extrasHtml(q.card)}`;
   document.getElementById('actions').innerHTML =
     `<button class="btn btn-lg btn-primary btn-block" data-act="next-q">Next ${icon('arrow')}</button>`;
 }
@@ -1266,7 +1402,7 @@ function speakCurrent() {
   const r = state.review;
   const ko =
     view === 'test' ? g?.questions[g.idx]?.card.ko
-    : view === 'write' ? g?.items[g.idx]?.card.ko
+    : view === 'write' || view === 'listen' ? g?.items[g.idx]?.card.ko
     : view === 'review' ? r?.queue[r.idx]?.card.ko
     : currentCard()?.ko;
   if (ko) speak(ko);
@@ -1280,10 +1416,13 @@ document.addEventListener('click', (e) => {
   const g = state.game;
   switch (act) {
     case 'upload': return openUpload(id);
-    case 'signout':
-      return confirmDialog({ title: 'Sign out?', text: 'Your words stay saved in your account.', ok: 'Sign out' }).then(
-        (ok) => ok && db.auth.signOut()
-      );
+    case 'settings': return openSettings();
+    case 'mix-toggle': return toggleMix(id);
+    case 'speak-word': return speak(el.dataset.ko);
+    case 'hint':
+      el.hidden = true;
+      el.nextElementSibling.hidden = false;
+      return;
     case 'close': return closeModal();
     case 'quick':
     case 'start': return startSelected(id, prefs());
@@ -1332,6 +1471,13 @@ document.addEventListener('click', (e) => {
     case 'review-show': return showReviewAnswer();
     case 'grade': return gradeReview(+el.dataset.g);
     case 'review-quit': return quitReview();
+    // listen
+    case 'listen-play': return playListen();
+    case 'listen-slow': return playListen(0.6);
+    case 'listen-opt': return answerListen(+el.dataset.i);
+    case 'listen-next': return nextListen();
+    case 'listen-again': return startListen(g.folderId, g.opts);
+    case 'listen-wrong': return startListen(g.folderId, { ...g.opts, ids: g.items.filter((i) => i.result === 'wrong').map((i) => i.card.id) });
   }
 });
 
@@ -1378,6 +1524,7 @@ document.addEventListener('keydown', (e) => {
   if (view === 'practice') flashcardKeys(e);
   else if (view === 'test') testKeys(e);
   else if (view === 'review') reviewKeys(e);
+  else if (view === 'listen') listenKeys(e);
 });
 
 /* ---------- routing ---------- */
@@ -1407,9 +1554,11 @@ function route() {
     if (state.practice?.folderId === id) return renderPractice();
     return go('/folder/' + id);
   }
-  if (view === 'match' || view === 'test' || view === 'write') {
+  if (view === 'match' || view === 'test' || view === 'write' || view === 'listen') {
     const g = state.game;
-    if (g?.type === view && g.folderId === id) return { match: renderMatch, test: renderTest, write: renderWrite }[view]();
+    if (g?.type === view && g.folderId === id) {
+      return { match: renderMatch, test: renderTest, write: renderWrite, listen: renderListen }[view]();
+    }
     return go('/folder/' + id);
   }
   return renderHome();

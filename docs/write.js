@@ -127,7 +127,7 @@ function drawWriteItem() {
   document.getElementById('p-count').textContent = `${g.idx + 1} / ${g.items.length}`;
   const prompt = writingKorean
     ? `<div class="f-tr">${esc(card.tr)}</div>`
-    : `<div class="f-ko" lang="ko">${esc(card.ko)}</div>${card.rom ? `<div class="f-rom">${esc(card.rom)}</div>` : ''}
+    : `<div class="f-ko" lang="ko">${esc(card.ko)}</div>${romHtml(card, 'prompt')}
        <button class="speak" data-act="speak" aria-label="Listen">${icon('sound')}</button>`;
   document.getElementById('wq').innerHTML = `
     <div class="t-prompt enter"><span class="face-label">${writingKorean ? 'Write it in Korean' : 'Write the meaning'}</span>${prompt}</div>
@@ -191,10 +191,12 @@ function finishWriteItem(item, text, check) {
     fb.innerHTML = check.result === 'typo'
       ? `Correct, small typo. It's spelled <b ${item.type === 'ko' ? 'lang="ko"' : ''}>${esc(check.expected)}</b>`
       : 'Correct!';
+    fb.innerHTML += extrasHtml(item.card);
     document.getElementById('actions').innerHTML =
       `<button class="btn btn-lg btn-primary btn-block" data-act="write-next">Next ${icon('arrow')}</button>`;
     const at = g.idx;
-    if (check.result === 'right') setTimeout(() => state.game === g && g.idx === at && g.phase === 'right' && nextWrite(), 900);
+    // Pause on its own only when there's nothing extra to read.
+    if (check.result === 'right' && !item.card.ex && !item.card.note) setTimeout(() => state.game === g && g.idx === at && g.phase === 'right' && nextWrite(), 900);
     return;
   }
 
@@ -202,8 +204,8 @@ function finishWriteItem(item, text, check) {
   g.phase = 'copy';
   fb.className = 'w-feedback no';
   fb.innerHTML = `<span class="w-answer"><small>Answer</small><b ${item.type === 'ko' ? 'lang="ko"' : ''}>${esc(check.expected)}</b>
-    ${item.type === 'ko' && item.card.rom ? `<small>${esc(item.card.rom)}</small>` : ''}</span>
-    <span class="w-copy-hint">Type it once to continue</span>`;
+    ${item.type === 'ko' && romText(item.card, 'answer') ? `<small>${esc(item.card.rom)}</small>` : ''}</span>
+    <span class="w-copy-hint">Type it once to continue</span>${extrasHtml(item.card)}`;
   input.value = '';
   input.classList.remove('no');
   input.placeholder = 'Type it here';

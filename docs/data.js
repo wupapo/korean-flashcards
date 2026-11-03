@@ -8,7 +8,8 @@ function createDb(sb) {
     due: ms(r.due), interval: r.interval_days, ease: r.ease, reps: r.reps, lapses: r.lapses, createdAt: ms(r.created_at),
   });
   const toCard = (r) => ({
-    id: r.id, folderId: r.folder_id, ko: r.ko, rom: r.rom, tr: r.tr, good: r.good, bad: r.bad, box: r.box, last: ms(r.last_seen),
+    id: r.id, folderId: r.folder_id, ko: r.ko, rom: r.rom, tr: r.tr, ex: r.ex, note: r.note,
+    good: r.good, bad: r.bad, box: r.box, last: ms(r.last_seen),
     // Spaced repetition per direction: rec = Korean -> meaning, pro = meaning -> Korean. Missing = never reviewed.
     reviews: Object.fromEntries((r.reviews || []).map((v) => [v.dir, toReview(v)])),
   });
@@ -33,7 +34,7 @@ function createDb(sb) {
     const seen = new Set();
     const out = [];
     for (const raw of list || []) {
-      const c = { ko: clean(raw.ko, 200), rom: clean(raw.rom, 200), tr: clean(raw.tr, 300) };
+      const c = { ko: clean(raw.ko, 200), rom: clean(raw.rom, 200), tr: clean(raw.tr, 300), ex: clean(raw.ex, 300) };
       const key = c.ko + '\u0000' + c.tr;
       if (!c.ko || !c.tr || seen.has(key)) continue;
       seen.add(key);
@@ -59,7 +60,7 @@ function createDb(sb) {
           .from('folders')
           .select(
             'id,name,created_at,' +
-              'cards(id,folder_id,ko,rom,tr,good,bad,box,last_seen,reviews(dir,due,interval_days,ease,reps,lapses,created_at)),' +
+              'cards(id,folder_id,ko,rom,tr,ex,note,good,bad,box,last_seen,reviews(dir,due,interval_days,ease,reps,lapses,created_at)),' +
               'sessions(at,mode,total,good,bad)'
           )
           .order('created_at')
@@ -93,7 +94,10 @@ function createDb(sb) {
     },
 
     async updateCard(cardId, fields) {
-      const c = { ko: clean(fields.ko, 200), rom: clean(fields.rom, 200), tr: clean(fields.tr, 300) };
+      const c = {
+        ko: clean(fields.ko, 200), rom: clean(fields.rom, 200), tr: clean(fields.tr, 300),
+        ex: clean(fields.ex, 300), note: clean(fields.note, 300),
+      };
       if (!c.ko || !c.tr) throw new Error('Korean word and translation are required');
       check(await sb.from('cards').update(c).eq('id', cardId));
     },
@@ -103,13 +107,24 @@ function createDb(sb) {
     },
 
     // Atomic in the database: correct moves the Leitner box up (max 5), wrong drops it to 0.
-    async answer(folderId, cardId, good) {
-      check(await sb.rpc('record_answer', { p_folder: folderId, p_card: cardId, p_good: !!good }));
+    // `day` is the local date (YYYY-MM-DD); it also counts the answer toward that day's goal.
+    async answer(folderId, cardId, good, day) {
+      check(await sb.rpc('record_answer', { p_folder: folderId, p_card: cardId, p_good: !!good, p_day: day }));
     },
 
     // Spaced repetition grade (1 again, 2 hard, 3 good, 4 easy); the database computes the next due date.
-    async recordReview(cardId, dir, grade) {
-      return toReview(check(await sb.rpc('record_review', { p_card: cardId, p_dir: dir, p_grade: grade })));
+    async recordReview(cardId, dir, grade, day) {
+      return toReview(check(await sb.rpc('record_review', { p_card: cardId, p_dir: dir, p_grade: grade, p_day: day })));
+    },
+
+    // Answers per local day, for the daily goal and streak: Map 'YYYY-MM-DD' -> count.
+    async activity() {
+      const rows = check(await sb.from('activity').select('day,answers').order('day', { ascending: false }).limit(400));
+      return new Map(rows.map((r) => [r.day, r.answers]));
+    },
+
+    async logActivity(day, count) {
+      check(await sb.rpc('log_activity', { p_day: day, p_count: count }));
     },
 
     async addSession(folderId, session) {

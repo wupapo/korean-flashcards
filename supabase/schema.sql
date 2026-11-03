@@ -14,6 +14,8 @@ create table public.cards (
   ko text not null check (char_length(ko) between 1 and 200),
   rom text not null default '' check (char_length(rom) <= 200),
   tr text not null check (char_length(tr) between 1 and 300),
+  ex text not null default '' check (char_length(ex) <= 300), -- example sentence, "Korean = translation"
+  note text not null default '' check (char_length(note) <= 300), -- personal memory hint
   good integer not null default 0 check (good >= 0),
   bad integer not null default 0 check (bad >= 0),
   box smallint not null default 0 check (box between 0 and 5),
@@ -66,23 +68,58 @@ create policy "own sessions" on public.sessions for all to authenticated
 
 grant select, insert, update, delete on public.folders, public.cards, public.sessions to authenticated;
 
--- One practice answer, applied atomically. Leitner box: correct moves up (max 5), wrong drops to 0.
-create function public.record_answer(p_folder uuid, p_card uuid, p_good boolean)
-returns public.cards
+-- Answers per day (the user's local date), for the daily goal and streak.
+create table public.activity (
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  day date not null,
+  answers integer not null default 0 check (answers >= 0),
+  primary key (user_id, day)
+);
+alter table public.activity enable row level security;
+create policy "own activity" on public.activity for all to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+grant select, insert, update, delete on public.activity to authenticated;
+
+create function public.log_activity(p_day date, p_count integer default 1)
+returns integer
 language sql
 security invoker
 set search_path = ''
 as $$
+  insert into public.activity (day, answers) values (p_day, greatest(p_count, 0))
+  on conflict (user_id, day) do update set answers = public.activity.answers + excluded.answers
+  returning answers;
+$$;
+revoke execute on function public.log_activity(date, integer) from public, anon, authenticated;
+grant execute on function public.log_activity(date, integer) to authenticated, service_role;
+
+-- One practice answer, applied atomically. Leitner box: correct moves up (max 5), wrong drops to 0.
+-- With p_day (the app's local date) it also counts toward that day's activity.
+create function public.record_answer(p_folder uuid, p_card uuid, p_good boolean, p_day date default null)
+returns public.cards
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  r public.cards;
+begin
   update public.cards set
     good = good + case when p_good then 1 else 0 end,
     bad = bad + case when p_good then 0 else 1 end,
     box = case when p_good then least(5, box + 1) else 0 end,
     last_seen = now()
   where id = p_card and folder_id = p_folder
-  returning *;
+  returning * into r;
+  if found and p_day is not null then
+    perform public.log_activity(p_day, 1);
+  end if;
+  return r;
+end;
 $$;
-revoke execute on function public.record_answer(uuid, uuid, boolean) from public, anon, authenticated;
-grant execute on function public.record_answer(uuid, uuid, boolean) to authenticated, service_role;
+revoke execute on function public.record_answer(uuid, uuid, boolean, date) from public, anon, authenticated;
+grant execute on function public.record_answer(uuid, uuid, boolean, date) to authenticated, service_role;
 
 -- Spaced repetition state, one row per word per direction:
 --   rec = recognize (Korean -> meaning), pro = produce (meaning -> Korean).
@@ -112,7 +149,7 @@ grant select, insert, update, delete on public.reviews to authenticated;
 
 -- One review, applied atomically (SM-2 style). Grades: 1 again, 2 hard, 3 good, 4 easy.
 -- "Again" resets the streak and brings the word back in a minute; the others push the next review out.
-create function public.record_review(p_card uuid, p_dir text, p_grade integer)
+create function public.record_review_core(p_card uuid, p_dir text, p_grade integer)
 returns public.reviews
 language plpgsql
 security invoker
@@ -171,5 +208,25 @@ begin
   return r;
 end;
 $$;
-revoke execute on function public.record_review(uuid, text, integer) from public, anon, authenticated;
-grant execute on function public.record_review(uuid, text, integer) to authenticated, service_role;
+revoke execute on function public.record_review_core(uuid, text, integer) from public, anon, authenticated;
+grant execute on function public.record_review_core(uuid, text, integer) to authenticated, service_role;
+
+-- The review the app calls: schedules the word and, with p_day, counts toward that day's activity.
+create function public.record_review(p_card uuid, p_dir text, p_grade integer, p_day date default null)
+returns public.reviews
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  r public.reviews;
+begin
+  r := public.record_review_core(p_card, p_dir, p_grade);
+  if p_day is not null then
+    perform public.log_activity(p_day, 1);
+  end if;
+  return r;
+end;
+$$;
+revoke execute on function public.record_review(uuid, text, integer, date) from public, anon, authenticated;
+grant execute on function public.record_review(uuid, text, integer, date) to authenticated, service_role;

@@ -470,6 +470,51 @@ kbd { font: 600 11px var(--font); background: var(--surface); border: 1px solid 
 .review .your { color: var(--ink-2); }
 .review.no .your { color: var(--bad); }
 
+/* ---------- daily goal, mix ---------- */
+.goal-box b small { font-size: 15px; font-weight: 600; color: var(--ink-3); }
+.goal-box.done b { color: var(--good); }
+.goal-box .pbar { margin: 6px 0 0; }
+.section-head { margin: 8px 0 12px; }
+.section-head .section-title { margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 99px; background: transparent; font-size: 14px; font-weight: 600; color: var(--ink-2); cursor: pointer;
+}
+.chip small { font-size: 12px; color: var(--ink-3); font-weight: 500; }
+.chip[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+
+/* ---------- examples and hints ---------- */
+.extras { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 420px; margin-top: 14px; text-align: left; }
+.extra { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 12px; background: var(--surface-2); font-size: 15px; font-weight: 500; color: var(--ink); }
+.extra > span { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.extra small { font-size: 13px; color: var(--ink-2); }
+.extra .i { width: 18px; height: 18px; margin-top: 1px; color: var(--warn); }
+.ex-speak { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.ex-speak .i { width: 15px; height: 15px; margin: 0; color: inherit; }
+.face .extras { font-size: 14px; }
+.face { overflow-y: auto; }
+.hint-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; padding: 6px 12px; border: 1px dashed var(--line); border-radius: 99px; background: transparent; font-size: 13px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.hint-btn .i { width: 15px; height: 15px; color: var(--warn); }
+.hint-text { margin-top: 12px; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); font-size: 14px; color: var(--ink-2); }
+.ex-prev { display: block; font-size: 12px; color: var(--ink-3); }
+.field > span small { font-weight: 500; color: var(--ink-3); }
+.w-feedback .extras, .t-feedback .extras { margin: 10px auto 0; font-weight: 500; }
+
+/* ---------- listen ---------- */
+.listen-btns { display: flex; align-items: center; gap: 14px; margin: 6px 0; }
+.listen-play {
+  width: 88px; height: 88px; display: grid; place-items: center; border: 0; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); cursor: pointer; box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 35%, transparent);
+  transition: transform 0.12s;
+}
+.listen-play:active { transform: scale(0.95); }
+.listen-play .i { width: 38px; height: 38px; }
+.listen-reveal { width: 100%; margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; align-items: center; animation: card-in 0.2s ease; }
+.listen-meaning { margin-top: 6px; font-size: 20px; font-weight: 650; color: var(--ink-2); }
+.t-feedback.hint { color: var(--warn); }
+.review-body .link .i { width: 16px; height: 16px; vertical-align: -3px; }
+
 /* ---------- results ---------- */
 .results { max-width: 560px; padding-top: calc(48px + env(safe-area-inset-top)); text-align: center; }
 .results h1 { margin: 0 0 6px; font-size: 28px; }

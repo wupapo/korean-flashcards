@@ -31,6 +31,22 @@ One word per line, `.txt`. Reading (romanization) is optional; it is generated w
 
 Separators recognised: ` - `, tab, `|`, `;`, `=`, `:`, `,`. Lines starting with `#` are ignored.
 
+Add an example sentence after `::`, written as `Korean = translation`:
+
+```
+사과 (sagwa) - olma :: 사과를 먹어요 = Men olma yeyman
+```
+
+Examples and a personal **memory hint** can also be added per word (tap the word in its folder).
+They show wherever the answer is revealed; a word with a hint gets a **Hint** button on the question side
+in Flashcards and Review.
+
+## Settings (gear on the home page)
+
+- **Show romanization**: Always, After answer (hidden while you're asked, so you read Hangul), or Never.
+- **Daily goal**: answers per day. Every answer counts (all modes, review, match pairs); the home page shows
+  today's progress and your day streak.
+
 ## Review (spaced repetition)
 
 The Review panel (home page for all folders, folder page for one) shows the words due today plus a few new ones.
@@ -47,6 +63,14 @@ good answers push it further out (1 day → 3 days → about a week → …).
 
 Pick a mode on the folder page; its settings appear below it. "Mixed" direction leans toward the side
 you're weaker at (from your review schedule), and toward Produce for words not reviewed yet.
+
+### Listen
+Hear the word (your device's Korean voice) without seeing it, then choose its meaning or write it in Hangul.
+**Slower** replays it slowly. Code: [`docs/listen.js`](docs/listen.js).
+
+### Mixed folders
+**Mix folders** on the home page practices words from several folders together; pick the folders at the top.
+Progress still counts for each word in its own folder.
 
 ### Write
 Type the answer yourself: the Korean in Hangul, or the meaning. Small typos in longer words still count
