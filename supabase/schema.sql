@@ -1,4 +1,4 @@
--- Database schema for the Supabase backend (already applied to project "korean-flashcards").
+-- Database schema (already applied to Supabase project "korean-flashcards").
 -- To set up a fresh project: paste this into the Supabase SQL editor and run it.
 
 create table public.folders (
@@ -33,10 +33,38 @@ create table public.sessions (
 );
 create index sessions_folder_at_idx on public.sessions (folder_id, at);
 
--- RLS on, no policies: only the server (secret key / service_role) can read or write.
+-- Each row belongs to the signed-in user who created it (filled in automatically from the login).
+alter table public.folders add column user_id uuid not null default auth.uid() references auth.users (id) on delete cascade;
+alter table public.cards add column user_id uuid not null default auth.uid() references auth.users (id) on delete cascade;
+alter table public.sessions add column user_id uuid not null default auth.uid() references auth.users (id) on delete cascade;
+create index folders_user_idx on public.folders (user_id);
+create index cards_user_idx on public.cards (user_id);
+create index sessions_user_idx on public.sessions (user_id);
+
+-- Row-level security: a signed-in user only sees and changes their own rows; anonymous visitors see nothing.
 alter table public.folders enable row level security;
 alter table public.cards enable row level security;
 alter table public.sessions enable row level security;
+
+create policy "own folders" on public.folders for all to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+
+create policy "own cards" on public.cards for all to authenticated
+  using (user_id = (select auth.uid()))
+  with check (
+    user_id = (select auth.uid())
+    and exists (select 1 from public.folders f where f.id = folder_id and f.user_id = (select auth.uid()))
+  );
+
+create policy "own sessions" on public.sessions for all to authenticated
+  using (user_id = (select auth.uid()))
+  with check (
+    user_id = (select auth.uid())
+    and exists (select 1 from public.folders f where f.id = folder_id and f.user_id = (select auth.uid()))
+  );
+
+grant select, insert, update, delete on public.folders, public.cards, public.sessions to authenticated;
 
 -- One practice answer, applied atomically. Leitner box: correct moves up (max 5), wrong drops to 0.
 create function public.record_answer(p_folder uuid, p_card uuid, p_good boolean)
@@ -54,4 +82,4 @@ as $$
   returning *;
 $$;
 revoke execute on function public.record_answer(uuid, uuid, boolean) from public, anon, authenticated;
-grant execute on function public.record_answer(uuid, uuid, boolean) to service_role;
+grant execute on function public.record_answer(uuid, uuid, boolean) to authenticated, service_role;

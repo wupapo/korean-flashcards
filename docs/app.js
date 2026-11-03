@@ -5,7 +5,7 @@ const $modal = document.getElementById('modal-root');
 const $toast = document.getElementById('toast');
 
 const MASTER_BOX = 3; // a word counts as mastered after 3 correct answers in a row
-const state = { folders: [], practice: null };
+const state = { user: null, folders: [], practice: null, game: null };
 
 /* ---------- helpers ---------- */
 
@@ -29,20 +29,12 @@ const ICONS = {
   edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   reset: '<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/>',
+  signout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/>',
 };
 const icon = (n) =>
   `<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
 
-async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch('/api' + path, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-  return data;
-}
+const db = createDb(supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY));
 
 function toast(msg) {
   $toast.textContent = msg;
@@ -83,7 +75,7 @@ const getFolder = (id) => state.folders.find((f) => f.id === id);
 const getCard = (fid, cid) => getFolder(fid)?.cards.find((c) => c.id === cid);
 
 async function loadFolders() {
-  state.folders = await api('/folders');
+  state.folders = await db.listFolders();
 }
 
 /* ---------- stats ---------- */
@@ -252,6 +244,7 @@ function renderHome() {
   $app.innerHTML = `
     <header class="topbar"><div class="topbar-in">
       <div class="brand"><span class="brand-mark" lang="ko">단어</span><span class="brand-sub">Flashcards</span></div>
+      <button class="icon-btn" data-act="signout" aria-label="Sign out" title="Sign out">${icon('signout')}</button>
       <button class="btn btn-primary" data-act="upload">${icon('upload')}<span>Upload words</span></button>
     </div></header>
     <main class="wrap">
@@ -381,11 +374,10 @@ function openUpload(presetFolderId = '') {
     try {
       let fid, added;
       if (target.value) {
-        ({ added } = await api(`/folders/${target.value}/cards`, { method: 'POST', body }));
+        ({ added } = await db.addCards(target.value, body.cards));
         fid = target.value;
       } else {
-        const r = await api('/folders', { method: 'POST', body: { ...body, name: fname.value.trim() } });
-        [fid, added] = [r.folder.id, r.added];
+        ({ id: fid, added } = await db.createFolder(fname.value.trim(), body.cards));
       }
       await loadFolders();
       closeModal();
@@ -543,15 +535,15 @@ function openFolderMenu(fid) {
       if (m === 'rename') {
         const name = await promptDialog({ title: 'Rename folder', value: f.name });
         if (!name) return;
-        await api(`/folders/${fid}`, { method: 'PATCH', body: { name } });
+        await db.renameFolder(fid, name);
       } else if (m === 'reset') {
         const ok = await confirmDialog({ title: 'Reset progress?', text: `All known/missed counts in "${f.name}" go back to zero. Words stay.`, ok: 'Reset', danger: true });
         if (!ok) return;
-        await api(`/folders/${fid}/reset`, { method: 'POST' });
+        await db.resetFolder(fid);
       } else if (m === 'delete') {
         const ok = await confirmDialog({ title: 'Delete folder?', text: `"${f.name}" and its ${f.cards.length} words will be removed for good.`, ok: 'Delete', danger: true });
         if (!ok) return;
-        await api(`/folders/${fid}`, { method: 'DELETE' });
+        await db.deleteFolder(fid);
         await loadFolders();
         toast('Folder deleted');
         return go('/');
@@ -584,7 +576,7 @@ function openWord(fid, cid) {
   $('#w-form').onsubmit = async (e) => {
     e.preventDefault();
     try {
-      await api(`/folders/${fid}/cards/${cid}`, { method: 'PATCH', body: { ko: $('#w-ko').value, rom: $('#w-rom').value, tr: $('#w-tr').value } });
+      await db.updateCard(cid, { ko: $('#w-ko').value, rom: $('#w-rom').value, tr: $('#w-tr').value });
       await loadFolders();
       closeModal();
       route();
@@ -594,7 +586,7 @@ function openWord(fid, cid) {
   };
   $('#w-del').onclick = async () => {
     try {
-      await api(`/folders/${fid}/cards/${cid}`, { method: 'DELETE' });
+      await db.deleteCard(cid);
       await loadFolders();
       closeModal();
       toast('Word deleted');
@@ -615,7 +607,7 @@ function pickCards(f, opts) {
   return shuffle(pool.sort((a, b) => a.box - b.box).slice(0, +opts.count));
 }
 
-// Same Leitner rule as the server: correct moves up a box, wrong drops to 0.
+// Same Leitner rule as the database's record_answer: correct moves up a box, wrong drops to 0.
 function recordAnswer(folderId, cardId, good) {
   const c = getCard(folderId, cardId);
   if (c) {
@@ -628,14 +620,12 @@ function recordAnswer(folderId, cardId, good) {
     }
     c.last = Date.now();
   }
-  api(`/folders/${folderId}/answer`, { method: 'POST', body: { cardId, good } }).catch(() =>
-    toast('Not saved: server unreachable')
-  );
+  db.answer(folderId, cardId, good).catch(() => toast('Not saved: no connection'));
 }
 
 function saveSession(folderId, session) {
   getFolder(folderId)?.sessions.push({ at: Date.now(), ...session });
-  api(`/folders/${folderId}/sessions`, { method: 'POST', body: session }).catch(() => {});
+  db.addSession(folderId, session).catch(() => {});
 }
 
 const scoreRing = (pct, label) =>
@@ -1235,6 +1225,10 @@ document.addEventListener('click', (e) => {
   const g = state.game;
   switch (act) {
     case 'upload': return openUpload(id);
+    case 'signout':
+      return confirmDialog({ title: 'Sign out?', text: 'Your words stay saved in your account.', ok: 'Sign out' }).then(
+        (ok) => ok && db.auth.signOut()
+      );
     case 'close': return closeModal();
     case 'quick':
     case 'start': return startSelected(id, prefs());
@@ -1346,15 +1340,74 @@ function route() {
   return renderHome();
 }
 
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => state.user && route());
 
-(async function init() {
+/* ---------- sign in ---------- */
+
+function renderLogin(mode = 'signin', message = '') {
+  const signup = mode === 'signup';
+  document.title = 'Sign in · 단어';
+  $app.innerHTML = `<main class="login">
+    <div class="empty-mark" lang="ko">단어</div>
+    <h1>${signup ? 'Create your account' : 'Welcome back'}</h1>
+    <p class="muted">${signup ? 'Your words and progress are saved to this account.' : 'Sign in to practice your Korean words.'}</p>
+    <form id="login-form" class="panel">
+      <label class="field"><span>Email</span><input id="l-email" type="email" autocomplete="email" required></label>
+      <label class="field"><span>Password</span><input id="l-pass" type="password" minlength="6"
+        autocomplete="${signup ? 'new-password' : 'current-password'}" required></label>
+      <p class="login-msg" id="l-msg" role="alert">${esc(message)}</p>
+      <button class="btn btn-primary btn-lg btn-block" id="l-btn">${signup ? 'Create account' : 'Sign in'}</button>
+    </form>
+    <p class="muted small">${signup ? 'Already have an account?' : 'First time here?'}
+      <button class="link" id="l-switch">${signup ? 'Sign in' : 'Create an account'}</button></p>
+  </main>`;
+  const $ = (id) => document.getElementById(id);
+  $('l-switch').onclick = () => renderLogin(signup ? 'signin' : 'signup');
+  $('login-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const email = $('l-email').value.trim();
+    const password = $('l-pass').value;
+    $('l-btn').disabled = true;
+    $('l-msg').textContent = '';
+    try {
+      if (signup) {
+        const { data, error } = await db.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
+        if (error) throw error;
+        if (!data.session) return renderLogin('signin', 'Check your email and open the confirmation link, then sign in here.');
+      } else {
+        const { error } = await db.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+      // onAuthStateChange takes it from here.
+    } catch (err) {
+      $('l-msg').textContent = err.message === 'Email not confirmed' ? 'Confirm your email first: open the link we sent you.' : err.message;
+      $('l-btn').disabled = false;
+    }
+  };
+}
+
+async function enterApp(user) {
+  if (state.user?.id === user.id) return;
+  state.user = user;
   try {
     await loadFolders();
     route();
-  } catch {
-    $app.innerHTML = `<section class="empty"><div class="empty-mark">!</div><h2>Can't reach the server</h2>
-      <p class="muted">Start it on your laptop with <code>npm start</code>, then reload this page.</p>
+  } catch (err) {
+    $app.innerHTML = `<section class="empty"><div class="empty-mark">!</div><h2>Can't load your words</h2>
+      <p class="muted">${esc(err.message)}. Check your connection, then reload.</p>
       <button class="btn btn-primary" onclick="location.reload()">Reload</button></section>`;
   }
-})();
+}
+
+db.auth.onAuthStateChange((event, session) => {
+  // Supabase asks not to await other Supabase calls inside this callback.
+  setTimeout(() => {
+    if (session?.user) return enterApp(session.user);
+    state.user = null;
+    state.folders = [];
+    state.practice = state.game = null;
+    stopTimer();
+    closeModal();
+    renderLogin();
+  });
+});

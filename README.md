@@ -2,22 +2,21 @@
 
 Personal Korean flashcards. Upload a word list, practice on laptop or phone.
 
-## Run
+**Live:** https://wupapo.github.io/korean-flashcards/ (sign in with your account).
+
+## How it works
+
+- `docs/` is the whole app: plain HTML/CSS/JS, no build step. GitHub Pages publishes it from the `main` branch on every push.
+- Data lives in Supabase. The browser talks to it directly with the **publishable** key in [`docs/config.js`](docs/config.js), which is safe to be public.
+- Access control is Supabase Auth (email + password) plus row-level security: every row has a `user_id`, and the policies in [`supabase/schema.sql`](supabase/schema.sql) only let the signed-in user read or change their own rows. Never put a **secret** key in this repo.
+
+## Run locally
 
 ```bash
 npm start
 ```
 
-Open the printed URL: `http://localhost:3000` on the laptop, or the `Phone:` URL on a phone on the same Wi-Fi.
-No `npm install` needed (no dependencies). Needs Node 22.9+.
-
-## Storage
-
-- **Supabase** (when `.env` has `SUPABASE_URL` and `SUPABASE_SECRET_KEY`): copy `.env.example` to `.env` and paste the secret key from Supabase → Project Settings → API Keys. Schema: [`supabase/schema.sql`](supabase/schema.sql). Tables have RLS on with no policies, so only this server (secret key) can read or write; never ship the secret key to the browser.
-- **Local file** (no `.env`): `data/db.json`.
-- Move local data into Supabase once: `npm run import` (skips folders already there).
-
-The startup log line `Storage:` shows which one is active.
+Serves `docs/` at `http://localhost:3000` (and on your Wi-Fi for the phone). It uses the same Supabase data as the live site.
 
 ## Word file format
 

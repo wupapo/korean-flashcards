@@ -146,6 +146,13 @@ kbd { font: 600 11px var(--font); background: var(--surface); border: 1px solid 
 }
 .empty h2 { margin: 0 0 8px; }
 
+/* ---------- sign in ---------- */
+.login { max-width: 400px; margin: 0 auto; padding: calc(56px + env(safe-area-inset-top)) 16px 40px; text-align: center; }
+.login .empty-mark { width: auto; height: 64px; padding: 0 18px; display: inline-grid; font-size: 30px; border-radius: 20px; }
+.login h1 { margin: 0 0 6px; font-size: 26px; }
+.login .panel { margin: 24px 0 16px; padding: 22px 18px 18px; text-align: left; }
+.login-msg { min-height: 20px; margin: -4px 0 12px; font-size: 14px; color: var(--bad); }
+
 /* ---------- folder ---------- */
 .folder-page { display: grid; gap: 0 16px; }
 @media (min-width: 900px) {
