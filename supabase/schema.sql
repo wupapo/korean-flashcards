@@ -28,7 +28,7 @@ create table public.sessions (
   id bigint generated always as identity primary key,
   folder_id uuid not null references public.folders (id) on delete cascade,
   at timestamptz not null default now(),
-  mode text not null default 'cards' check (mode in ('cards', 'match', 'test', 'write', 'listen', 'review')),
+  mode text not null default 'cards' check (mode in ('cards', 'match', 'test', 'write', 'listen', 'review', 'build', 'particle', 'say')),
   total integer not null check (total >= 0),
   good integer not null check (good >= 0),
   bad integer not null check (bad >= 0)

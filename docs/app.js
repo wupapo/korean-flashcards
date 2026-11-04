@@ -31,6 +31,7 @@ const ICONS = {
   reset: '<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   signout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/>',
 };
 const icon = (n) =>
@@ -59,6 +60,8 @@ const PREF_DEFAULTS = {
   wdir: 'mix', // write mode: type Korean / translation / mixed
   rnew: '10', rdir: 'both', // review: new words per day, directions
   lmode: 'mc', // listen mode: answer by choosing the meaning or writing it
+  bdir: 'ko', // sentence builder: build in Korean / translation / mixed
+  smode: 'word', sprompt: 'ko', // speak: words or sentences; read aloud or say it from the meaning
   rom: 'show', // romanization: 'show' always, 'flip' once the answer is shown, 'hide' never
   goal: '30', // daily goal, in answers
   mix: [], // folder ids in "Mixed folders" (empty = all)
@@ -566,7 +569,7 @@ function renderFolder(id) {
         ${reviewPanel(f.id)}
         <section class="panel">
           <h2 class="panel-title">Practice</h2>
-          <div class="mode-tabs">${seg('mode', 'Mode', [['cards', 'Flashcards'], ['match', 'Match'], ['test', 'Test'], ['write', 'Write'], ['listen', 'Listen']], p.mode)}</div>
+          <div class="mode-tabs">${seg('mode', 'Mode', [['cards', 'Flashcards'], ['match', 'Match'], ['test', 'Test'], ['write', 'Write'], ['listen', 'Listen'], ['build', 'Build'], ['particle', 'Particles'], ['say', 'Speak']], p.mode)}</div>
           <div id="practice-opts">${practiceOptions(f, p)}</div>
           <button class="btn btn-primary btn-lg btn-block" data-act="start" data-id="${f.id}" id="start-btn"></button>
         </section>
@@ -619,6 +622,22 @@ function practiceOptions(f, p) {
   if (p.mode === 'match') {
     return `${which}${count}<p class="opt-note">Tap a Korean word, then its translation. Correct pairs disappear, wrong pairs flash red.</p>`;
   }
+  if (p.mode === 'build') {
+    return `${seg('bdir', 'Build in', [['ko', 'Korean'], ['tr', 'Translation'], ['mix', 'Mixed']], p.bdir)}
+      ${which}${count}
+      <p class="opt-note">Put the words of each example sentence in order. A few extra words are mixed in. Uses words that have an example sentence.</p>`;
+  }
+  if (p.mode === 'particle') {
+    return `${which}${count}
+      <p class="opt-note">Pick the missing particle (을/를, 이/가, 은/는, 에, 에서…) in your example sentences, with a short tip after each answer.</p>`;
+  }
+  if (p.mode === 'say') {
+    return `${seg('sprompt', 'Prompt', [['ko', 'Read it aloud'], ['tr', 'Say it from the meaning']], p.sprompt)}
+      ${seg('smode', 'Say', [['word', 'Words'], ['sentence', 'Sentences']], p.smode)}
+      ${which}${count}
+      <p class="opt-note">${Recognizer ? 'Your browser listens through the microphone and checks what it heard. Speak clearly; it works best in a quiet place.'
+        : 'This browser cannot recognize speech. Use Chrome, Edge or Safari.'}</p>`;
+  }
   if (p.mode === 'listen') {
     return `${seg('lmode', 'Answer by', [['mc', 'Choosing the meaning'], ['write', 'Writing it in Korean']], p.lmode)}
       ${which}${count}
@@ -645,17 +664,27 @@ function updateStartButton(f) {
   const btn = document.getElementById('start-btn');
   if (!btn) return;
   const p = prefs();
-  const pool = poolFor(f, p.set).length;
+  const keep = p.mode === 'build' ? buildable : p.mode === 'particle' ? hasParticle
+    : p.mode === 'say' && p.smode === 'sentence' ? (c) => !!c.ex : () => true;
+  const pool = poolFor(f, p.set).filter(keep).length;
   const n = p.count === 'all' ? pool : Math.min(+p.count, pool);
   const [min, label] =
     p.mode === 'match' ? [2, `Start match · ${n} words`]
     : p.mode === 'test' ? [1, `Start test · ${n} questions`]
     : p.mode === 'write' ? [1, `Start writing · ${n} words`]
     : p.mode === 'listen' ? [1, `Start listening · ${n} words`]
+    : p.mode === 'build' ? [1, `Start building · ${n} sentences`]
+    : p.mode === 'particle' ? [1, `Start · ${n} sentences`]
+    : p.mode === 'say' ? [1, `Start speaking · ${n} ${p.smode === 'sentence' ? 'sentences' : 'words'}`]
     : [1, `Start · ${n} cards`];
   const tooFew = (p.mode === 'test' || (p.mode === 'listen' && p.lmode === 'mc')) && f.cards.length < 2;
-  btn.disabled = n < min || tooFew;
-  btn.innerHTML = !btn.disabled ? `${icon('play')} ${label}` : n && n < min || tooFew ? 'Needs at least 2 words' : 'No words in this set';
+  const noMic = p.mode === 'say' && !Recognizer;
+  const needsEx = p.mode === 'build' || p.mode === 'particle' || (p.mode === 'say' && p.smode === 'sentence');
+  btn.disabled = n < min || tooFew || noMic;
+  btn.innerHTML = !btn.disabled ? `${icon('play')} ${label}`
+    : noMic ? 'Not supported in this browser'
+    : n && n < min || tooFew ? 'Needs at least 2 words'
+    : needsEx ? 'No example sentences in this set' : 'No words in this set';
 }
 
 function startSelected(folderId, p) {
@@ -663,6 +692,9 @@ function startSelected(folderId, p) {
   if (p.mode === 'test') return startTest(folderId, p);
   if (p.mode === 'write') return startWrite(folderId, p);
   if (p.mode === 'listen') return startListen(folderId, p);
+  if (p.mode === 'build') return startBuild(folderId, p);
+  if (p.mode === 'particle') return startParticle(folderId, p);
+  if (p.mode === 'say') return startSay(folderId, p);
   return startPractice(folderId, p);
 }
 
@@ -672,7 +704,7 @@ function openSettings() {
     ${seg('rom', 'Show romanization', [['show', 'Always'], ['flip', 'After answer'], ['hide', 'Never']], p.rom)}
     <p class="opt-note">"After answer" hides the reading while you're being asked, so you practice reading Hangul.</p>
     ${seg('goal', 'Daily goal (answers)', [['10', '10'], ['20', '20'], ['30', '30'], ['50', '50'], ['100', '100']], p.goal)}
-    <p class="opt-note">Every answer counts: flashcards, test, write, listen, review and match pairs.</p>
+    <p class="opt-note">Every answer counts: all practice modes, review and match pairs.</p>
     <div class="modal-actions">
       <button class="btn btn-danger-ghost" id="st-out">${icon('signout')} Sign out</button><span class="spacer"></span>
       <button class="btn btn-primary" id="st-done">Done</button>
@@ -775,9 +807,10 @@ function openWord(fid, cid) {
 
 /* ---------- practice ---------- */
 
-function pickCards(f, opts) {
-  if (opts.ids) return shuffle(f.cards.filter((c) => opts.ids.includes(c.id)));
-  const pool = shuffle(poolFor(f, opts.set));
+// keep: only words a mode can use (e.g. ones with an example sentence).
+function pickCards(f, opts, keep = () => true) {
+  if (opts.ids) return shuffle(f.cards.filter((c) => opts.ids.includes(c.id) && keep(c)));
+  const pool = shuffle(poolFor(f, opts.set).filter(keep));
   if (opts.count === 'all') return pool;
   // With a limit, weakest words first (stable sort keeps the shuffle within each box).
   return shuffle(pool.sort((a, b) => a.box - b.box).slice(0, +opts.count));
@@ -1453,6 +1486,7 @@ document.addEventListener('click', (e) => {
     case 'next-q': return nextQuestion();
     case 'quit-game': {
       stopTimer();
+      sayRec?.abort();
       state.game = null;
       return go('/folder/' + g.folderId);
     }
@@ -1478,6 +1512,25 @@ document.addEventListener('click', (e) => {
     case 'listen-next': return nextListen();
     case 'listen-again': return startListen(g.folderId, g.opts);
     case 'listen-wrong': return startListen(g.folderId, { ...g.opts, ids: g.items.filter((i) => i.result === 'wrong').map((i) => i.card.id) });
+    // sentence builder
+    case 'build-tile': return tapBuildTile(+el.dataset.key, el.dataset.where);
+    case 'build-check': return checkBuild();
+    case 'build-skip': return checkBuild(true);
+    case 'build-next': return nextBuild();
+    case 'build-again': return startBuild(g.folderId, g.opts);
+    case 'build-wrong': return startBuild(g.folderId, { ...g.opts, ids: g.items.filter((i) => i.result === 'wrong').map((i) => i.card.id) });
+    // particles
+    case 'particle-opt': return answerParticle(+el.dataset.i);
+    case 'particle-next': return nextParticle();
+    case 'particle-again': return startParticle(g.folderId, g.opts);
+    case 'particle-wrong': return startParticle(g.folderId, { ...g.opts, ids: g.items.filter((i) => i.result === 'wrong').map((i) => i.card.id) });
+    // speak
+    case 'say-mic': return listenForSpeech();
+    case 'say-listen': return speak(sayText(g.items[g.idx]));
+    case 'say-skip': return finishSayItem(false);
+    case 'say-next': return nextSay();
+    case 'say-again': return startSay(g.folderId, g.opts);
+    case 'say-wrong': return startSay(g.folderId, { ...g.opts, ids: g.items.filter((i) => i.result === 'wrong').map((i) => i.card.id) });
   }
 });
 
@@ -1525,6 +1578,9 @@ document.addEventListener('keydown', (e) => {
   else if (view === 'test') testKeys(e);
   else if (view === 'review') reviewKeys(e);
   else if (view === 'listen') listenKeys(e);
+  else if (view === 'build') buildKeys(e);
+  else if (view === 'particle') particleKeys(e);
+  else if (view === 'say') sayKeys(e);
 });
 
 /* ---------- routing ---------- */
@@ -1554,10 +1610,11 @@ function route() {
     if (state.practice?.folderId === id) return renderPractice();
     return go('/folder/' + id);
   }
-  if (view === 'match' || view === 'test' || view === 'write' || view === 'listen') {
+  const games = { match: renderMatch, test: renderTest, write: renderWrite, listen: renderListen, build: renderBuild, particle: renderParticle, say: renderSay };
+  if (games[view]) {
     const g = state.game;
     if (g?.type === view && g.folderId === id) {
-      return { match: renderMatch, test: renderTest, write: renderWrite, listen: renderListen }[view]();
+      return games[view]();
     }
     return go('/folder/' + id);
   }

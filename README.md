@@ -64,6 +64,23 @@ good answers push it further out (1 day → 3 days → about a week → …).
 Pick a mode on the folder page; its settings appear below it. "Mixed" direction leans toward the side
 you're weaker at (from your review schedule), and toward Produce for words not reviewed yet.
 
+### Build (sentence builder)
+See a word's example sentence in one language and tap shuffled word tiles to build it in the other
+(a few extra words are mixed in). Trains word order and particles. Right words in another order are pointed out.
+Keys: `Backspace` remove last tile, `Enter` check / next, `S` listen. Code: [`docs/build.js`](docs/build.js).
+
+### Particles
+An example sentence with one particle blanked out (`사과__ 먹어요`): pick 을/를, 이/가, 은/는, 에, 에서, 으로/로…
+Particles are found automatically: only after a known noun, and only in the form that fits its last sound.
+Wrong options never include one that could also be right in that spot. After each answer a short tip explains
+the particle (with the Uzbek equivalent) and, if you picked the wrong twin (을 vs 를), the final-consonant rule.
+Counts toward the daily goal but not word progress. Code: [`docs/particle.js`](docs/particle.js).
+
+### Speak
+Say a word or sentence out loud; the browser's speech recognition (Korean) checks what it heard, with 3 tries.
+**Read it aloud** shows the Korean; **Say it from the meaning** shows only the translation (this one moves word
+progress). Works in Chrome, Edge and Safari; the browser asks for the microphone. Code: [`docs/say.js`](docs/say.js).
+
 ### Listen
 Hear the word (your device's Korean voice) without seeing it, then choose its meaning or write it in Hangul.
 **Slower** replays it slowly. Code: [`docs/listen.js`](docs/listen.js).
